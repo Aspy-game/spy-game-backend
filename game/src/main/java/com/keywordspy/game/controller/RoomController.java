@@ -11,8 +11,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/rooms")
@@ -24,11 +26,23 @@ public class RoomController {
     @Autowired
     private UserService userService;
 
-    // Lấy user hiện tại từ token
     private User getCurrentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return userService.findByUsername(auth.getName())
                 .orElseThrow(() -> new RuntimeException("User not found"));
+    }
+
+    private Map<String, Object> toRoomResponse(Room room) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("room_id", room.getId());
+        map.put("room_code", room.getRoomCode());
+        map.put("host_id", room.getHostId());
+        map.put("max_players", room.getMaxPlayers());
+        map.put("current_players", room.getCurrentPlayers());
+        map.put("status", room.getStatus().toString());
+        map.put("is_private", room.isPrivate());
+        map.put("created_at", room.getCreatedAt().toString());
+        return map;
     }
 
     // T-009: Tạo phòng mới
@@ -37,24 +51,21 @@ public class RoomController {
         try {
             User user = getCurrentUser();
             boolean isPrivate = false;
-            if (request != null && request.containsKey("isPrivate")) {
-                isPrivate = (Boolean) request.get("isPrivate");
+            if (request != null && request.containsKey("is_private")) {
+                isPrivate = (Boolean) request.get("is_private");
             }
 
             Room room = roomService.createRoom(user.getId(), isPrivate);
 
-            return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
-                    "id", room.getId(),
-                    "roomCode", room.getRoomCode(),
-                    "hostId", room.getHostId(),
-                    "maxPlayers", room.getMaxPlayers(),
-                    "currentPlayers", room.getCurrentPlayers(),
-                    "status", room.getStatus().toString(),
-                    "isPrivate", room.isPrivate(),
-                    "createdAt", room.getCreatedAt().toString()
+            Map<String, Object> response = toRoomResponse(room);
+            response.put("host", Map.of(
+                    "user_id", user.getId(),
+                    "display_name", user.getDisplayName() != null ? user.getDisplayName() : user.getUsername()
             ));
+
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -65,9 +76,16 @@ public class RoomController {
             @RequestParam(defaultValue = "10") int size) {
         try {
             List<Room> rooms = roomService.getWaitingRooms(page, size);
-            return ResponseEntity.ok(rooms);
+            List<Map<String, Object>> roomList = rooms.stream()
+                    .map(this::toRoomResponse)
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(Map.of(
+                    "rooms", roomList,
+                    "total", roomList.size()
+            ));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -77,17 +95,9 @@ public class RoomController {
         try {
             User user = getCurrentUser();
             Room room = roomService.joinRoom(roomCode, user.getId());
-
-            return ResponseEntity.ok(Map.of(
-                    "id", room.getId(),
-                    "roomCode", room.getRoomCode(),
-                    "hostId", room.getHostId(),
-                    "currentPlayers", room.getCurrentPlayers(),
-                    "maxPlayers", room.getMaxPlayers(),
-                    "status", room.getStatus().toString()
-            ));
+            return ResponseEntity.ok(toRoomResponse(room));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -97,18 +107,12 @@ public class RoomController {
         try {
             User user = getCurrentUser();
             Room room = roomService.leaveRoom(roomCode, user.getId());
-
             if (room == null) {
                 return ResponseEntity.ok(Map.of("message", "Room deleted (no players left)"));
             }
-
-            return ResponseEntity.ok(Map.of(
-                    "roomCode", room.getRoomCode(),
-                    "currentPlayers", room.getCurrentPlayers(),
-                    "message", "Left room successfully"
-            ));
+            return ResponseEntity.ok(Map.of("message", "Left room"));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -118,18 +122,9 @@ public class RoomController {
         try {
             Room room = roomService.findByRoomCode(roomCode)
                     .orElseThrow(() -> new RuntimeException("Room not found"));
-
-            return ResponseEntity.ok(Map.of(
-                    "id", room.getId(),
-                    "roomCode", room.getRoomCode(),
-                    "hostId", room.getHostId(),
-                    "currentPlayers", room.getCurrentPlayers(),
-                    "maxPlayers", room.getMaxPlayers(),
-                    "status", room.getStatus().toString(),
-                    "isPrivate", room.isPrivate()
-            ));
+            return ResponseEntity.ok(toRoomResponse(room));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 }
