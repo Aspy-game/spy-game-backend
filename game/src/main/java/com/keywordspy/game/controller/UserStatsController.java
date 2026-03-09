@@ -36,7 +36,7 @@ public class UserStatsController {
                 .orElseThrow(() -> new RuntimeException("User not found"));
     }
 
-    // T-051: Xem thống kê cá nhân
+    // GET /users/me/stats
     @GetMapping("/stats")
     public ResponseEntity<?> getMyStats() {
         try {
@@ -50,24 +50,25 @@ public class UserStatsController {
                     : 0.0;
 
             Map<String, Object> result = new HashMap<>();
-            result.put("userId", user.getId());
+            result.put("user_id", user.getId());
             result.put("username", user.getUsername());
-            result.put("totalGames", stats.getTotalGames());
-            result.put("totalWins", totalWins);
-            result.put("winRate", winRate);
-            result.put("winsCivilian", stats.getWinsCivilian());
-            result.put("winsSpy", stats.getWinsSpy());
-            result.put("winsInfected", stats.getWinsInfected());
-            result.put("timesAsSpy", stats.getTimesAsSpy());
-            result.put("timesInfected", stats.getTimesInfected());
-            result.put("correctVotes", stats.getCorrectVotes());
+            result.put("total_games", stats.getTotalGames());
+            result.put("total_wins", totalWins);
+            result.put("win_rate", winRate);
+            result.put("wins_civilian", stats.getWinsCivilian());
+            result.put("wins_spy", stats.getWinsSpy());
+            result.put("wins_infected", stats.getWinsInfected());
+            result.put("times_as_spy", stats.getTimesAsSpy());
+            result.put("times_infected", stats.getTimesInfected());
+            result.put("correct_votes", stats.getCorrectVotes());
+
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
-    // T-052: Xem lịch sử ván đấu
+    // GET /users/me/history
     @GetMapping("/history")
     public ResponseEntity<?> getMyHistory(
             @RequestParam(defaultValue = "0") int page,
@@ -78,17 +79,18 @@ public class UserStatsController {
             List<Match> matches = matchRepository.findAll(PageRequest.of(page, size))
                     .stream()
                     .filter(m -> m.getSpyUserId() != null &&
-                            (m.getSpyUserId().equals(user.getId()) ||
-                             m.getRoomId() != null))
+                            m.getSpyUserId().equals(user.getId()))
                     .toList();
 
-            return ResponseEntity.ok(Map.of(
-                    "page", page,
-                    "size", size,
-                    "matches", matches
-            ));
+            Map<String, Object> result = new HashMap<>();
+            result.put("matches", matches);
+            result.put("total", matches.size());
+            result.put("page", page);
+            result.put("size", size);
+
+            return ResponseEntity.ok(result);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 }
