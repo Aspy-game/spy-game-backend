@@ -29,6 +29,10 @@ public class Match {
 
     private Integer aiEliminatedRound;
 
+    private boolean isSpyAbilityUnlocked = false;
+
+    private SpyAbility unlockedAbility = SpyAbility.none;
+
     private MatchStatus status = MatchStatus.in_progress;
 
     private LocalDateTime startedAt = LocalDateTime.now();
