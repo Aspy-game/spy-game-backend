@@ -10,6 +10,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import org.springframework.context.annotation.Profile;
+import java.time.LocalDateTime;
+
 import java.util.Map;
 
 @RestController
@@ -131,4 +134,21 @@ public class GameController {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
+
+      // DEBUG: Endpoint để thay đổi state của game thủ công
+  // AN TOÀN: Chỉ hoạt động khi profile là "dev"
+  @Profile("dev")
+  @PostMapping("/game/{matchId}/set-state")
+  public ResponseEntity<?> setGameState(
+          @PathVariable String matchId,
+          @RequestBody Map<String, String> request) {
+      try {
+          String stateStr = request.get("state");
+          GameSession.GameState newState = GameSession.GameState.valueOf(stateStr.toUpperCase());
+          gameService.setGameState(matchId, newState);
+          return ResponseEntity.ok(Map.of("message", "Game state changed to " + newState));
+      } catch (Exception e) {
+          return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+      }
+  }
 }

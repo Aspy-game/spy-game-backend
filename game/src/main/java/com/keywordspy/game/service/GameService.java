@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.context.annotation.Profile;
 @Service
 public class GameService {
 
@@ -552,4 +553,15 @@ private RoomPlayerRepository roomPlayerRepository;
 
         return state;
     }
+      // DEBUG: Method để thay đổi state thủ công
+  // AN TOÀN: Chỉ hoạt động khi profile là "dev"
+  @Profile("dev")
+  public void setGameState(String matchId, GameState newState) {
+      GameSession session = getSession(matchId);
+      timerService.cancelTimer(matchId); // Hủy timer cũ
+      stateMachine.transition(session, newState); // Chuyển state
+      session.setPhaseStartTime(LocalDateTime.now());
+      session.setPhaseEndTime(LocalDateTime.now().plusSeconds(300)); // Set timer mới cho phase tiếp theo
+      broadcastPhase(session); // Thông báo cho client
+  }
 }
