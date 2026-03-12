@@ -21,10 +21,10 @@ import java.util.concurrent.TimeUnit;
 public class TimerService {
 
     // Thời gian mỗi phase (giây)
-public static final int DESCRIBE_DURATION = 10;
-public static final int DISCUSS_DURATION = 10;
+public static final int DESCRIBE_DURATION = 30;
+public static final int DISCUSS_DURATION = 30;
 public static final int VOTE_DURATION = 300;  // VOTING giữ 300s để kịp vote
-public static final int ROLE_CHECK_DURATION = 10; // nếu có
+public static final int ROLE_CHECK_DURATION = 20; // nếu có
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
     private final Map<String, ScheduledFuture<?>> activeTimers = new ConcurrentHashMap<>();
