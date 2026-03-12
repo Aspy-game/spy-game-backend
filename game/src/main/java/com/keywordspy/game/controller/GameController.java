@@ -89,6 +89,33 @@ public class GameController {
         }
     }
 
+    // T-021: POST /game/:matchId/rolecheck
+    @PostMapping("/game/{matchId}/rolecheck")
+    public ResponseEntity<?> roleCheck(
+            @PathVariable String matchId,
+            @RequestBody Map<String, String> request) {
+        try {
+            User user = getCurrentUser();
+            String guessedRole = request.get("guessed_role");
+            boolean correct = gameService.checkRoleAndUnlockAbility(matchId, user.getId(), guessedRole);
+
+            if (correct) {
+                return ResponseEntity.ok(Map.of(
+                        "correct", true,
+                        "ability_available", "fake_message",
+                        "message", "Năng lực đã được mở khóa!"
+                ));
+            } else {
+                return ResponseEntity.ok(Map.of(
+                        "correct", false,
+                        "message", "Đoán sai rồi!"
+                ));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     // T-027: POST /game/:matchId/vote
     @PostMapping("/game/{matchId}/vote")
     public ResponseEntity<?> submitVote(

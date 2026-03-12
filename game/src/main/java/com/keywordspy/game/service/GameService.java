@@ -310,6 +310,35 @@ private RoomPlayerRepository roomPlayerRepository;
         // Tiếp tục round mới
         startNextRound(session);
     }
+    // T-021: Role Check (Spy guess role)
+    public boolean checkRoleAndUnlockAbility(String matchId, String userId, String guessedRole) {
+        GameSession session = getSession(matchId);
+
+        // Chỉ cho phép ở phase ROLE_CHECK
+        if (session.getState() != GameState.ROLE_CHECK) {
+            throw new RuntimeException("Not in role check phase");
+        }
+
+        // Chỉ Spy mới được check
+        if (session.getSpyUserId() == null || !session.getSpyUserId().equals(userId)) {
+            throw new RuntimeException("Only Spy can perform role check");
+        }
+
+        // Nếu đã check đúng rồi thì không cho check lại
+        if (session.isRoleCheckCorrect()) {
+            return true;
+        }
+
+        // Kiểm tra đáp án
+        if ("spy".equalsIgnoreCase(guessedRole)) {
+            session.setRoleCheckCorrect(true);
+            session.setAbilityType(SpyAbility.fake_message); // Mở khóa fake_message
+            return true;
+        }
+
+        return false;
+    }
+
     public void onRoleCheckPhaseEnd(String matchId) {
     GameSession session = getSession(matchId);
     if (session.getState() == GameState.ROLE_CHECK) {
