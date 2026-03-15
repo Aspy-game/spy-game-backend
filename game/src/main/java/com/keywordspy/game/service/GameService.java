@@ -355,12 +355,14 @@ private RoomPlayerRepository roomPlayerRepository;
     private void startNextRound(GameSession session) {
     session.setCurrentRound(session.getCurrentRound() + 1);
 
-    if (session.getCurrentRound() >= 2) {
+    // CHỈ VÀO ROLE_CHECK Ở ROUND 2
+    if (session.getCurrentRound() == 2) {
         stateMachine.transition(session, GameState.ROLE_CHECK);
         session.setPhaseStartTime(LocalDateTime.now());
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.ROLE_CHECK_DURATION));
-        timerService.startRoleCheckTimer(session.getMatchId()); // ← thêm dòng này
+        timerService.startRoleCheckTimer(session.getMatchId());
     } else {
+        // Round 1 và Round 3 trở đi sẽ vào thẳng DESCRIBING
         stateMachine.transition(session, GameState.DESCRIBING);
         session.setPhaseStartTime(LocalDateTime.now());
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DESCRIBE_DURATION));
