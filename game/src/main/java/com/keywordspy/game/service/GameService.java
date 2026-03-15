@@ -333,7 +333,17 @@ private RoomPlayerRepository roomPlayerRepository;
         // Kiểm tra đáp án
         if ("spy".equalsIgnoreCase(guessedRole)) {
             session.setRoleCheckCorrect(true);
-            session.setAbilityType(SpyAbility.fake_message); // Mở khóa fake_message
+            
+            // Logic Trade-off: 
+            // - Nếu AI còn sống -> Ưu tiên mở khóa Fake Message (mất quyền Tha hóa vĩnh viễn)
+            // - Nếu AI đã chết -> Mở khóa Infection (Tha hóa)
+            boolean aiAlive = session.getPlayers().stream().anyMatch(p -> p.isAi() && p.isAlive());
+            if (aiAlive) {
+                session.setAbilityType(SpyAbility.fake_message);
+            } else {
+                session.setAbilityType(SpyAbility.infection); // Chức năng Tha hóa sẽ thêm sau
+            }
+            
             return true;
         }
 
