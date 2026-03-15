@@ -513,6 +513,51 @@ private RoomPlayerRepository roomPlayerRepository;
         );
     }
 
+    // T-023: Năng lực Tin nhắn giả mạo AI
+    public Map<String, Object> useFakeMessageAbility(String matchId, String spyUserId, String content) {
+        GameSession session = getSession(matchId);
+
+        // 1. Kiểm tra phase (Chỉ được dùng trong DESCRIBING)
+        if (session.getState() != GameState.DESCRIBING) {
+            throw new RuntimeException("Chỉ có thể dùng năng lực trong giai đoạn mô tả");
+        }
+
+        // 2. Kiểm tra quyền Spy và đã Role Check thành công chưa
+        if (!spyUserId.equals(session.getSpyUserId())) {
+            throw new RuntimeException("Chỉ Spy mới có thể dùng năng lực này");
+        }
+        if (!session.isRoleCheckCorrect() || session.getAbilityType() != SpyAbility.fake_message) {
+            throw new RuntimeException("Năng lực chưa được mở khóa");
+        }
+
+        // 3. Kiểm tra đã dùng trong round này chưa (Mỗi round chỉ dùng 1 lần)
+        if (session.getFakeDescriptions().containsKey(session.getCurrentRound())) {
+            throw new RuntimeException("Bạn đã dùng năng lực này trong vòng này rồi");
+        }
+
+        // 4. Tìm AI Player còn sống
+        Player aiPlayer = session.getPlayers().stream()
+                .filter(p -> p.isAi() && p.isAlive())
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy AI Civilian còn sống để giả mạo"));
+
+        // 5. Lưu tin nhắn giả mạo
+        session.getFakeDescriptions().put(session.getCurrentRound(), content);
+
+        // 6. Broadcast tin nhắn giả dưới danh nghĩa AI
+        Map<String, Object> fakeMsg = new HashMap<>();
+        fakeMsg.put("user_id", aiPlayer.getUserId());
+        fakeMsg.put("display_name", aiPlayer.getDisplayName());
+        fakeMsg.put("color", aiPlayer.getColor().toString());
+        fakeMsg.put("content", content);
+        fakeMsg.put("is_fake", true);
+        fakeMsg.put("round", session.getCurrentRound());
+
+        messagingTemplate.convertAndSend("/topic/game/" + matchId + "/descriptions", (Object) fakeMsg);
+
+        return Map.of("sent", true, "displayed_as", aiPlayer.getDisplayName());
+    }
+
     // Lấy game session
     public GameSession getSession(String matchId) {
         GameSession session = gameSessions.get(matchId);

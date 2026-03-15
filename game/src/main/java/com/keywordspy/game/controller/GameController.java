@@ -135,7 +135,22 @@ public class GameController {
         }
     }
 
-      // DEBUG: Endpoint để thay đổi state của game thủ công
+      // T-023: POST /game/:matchId/ability/fake-message
+    @PostMapping("/game/{matchId}/ability/fake-message")
+    public ResponseEntity<?> useFakeMessageAbility(
+            @PathVariable String matchId,
+            @RequestBody Map<String, String> request) {
+        try {
+            User user = getCurrentUser();
+            String content = request.get("content");
+            Map<String, Object> result = gameService.useFakeMessageAbility(matchId, user.getId(), content);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // DEBUG: Endpoint để thay đổi state của game thủ công
   // AN TOÀN: Chỉ hoạt động khi profile là "dev"
   @Profile("dev")
   @PostMapping("/game/{matchId}/set-state")
