@@ -35,7 +35,7 @@ public class GameSession {
     private List<Player> players = new ArrayList<>();
     private String spyUserId;
     private String aiPlayerId;
-    private String infectedUserId;   // userId của người bị Tha hóa (null nếu chưa có)
+    private String infectedUserId;
 
     // =========================================================
     // PHASE TIMING
@@ -46,42 +46,53 @@ public class GameSession {
     // =========================================================
     // ROUND DATA
     // =========================================================
-
     // Mô tả thật: roundNumber → (userId → nội dung)
     private Map<Integer, Map<String, String>> descriptions = new HashMap<>();
 
-    // Tin nhắn giả mạo AI của Spy: roundNumber → nội dung
-    // (chỉ lưu 1 tin/round vì Spy chỉ được dùng 1 lần)
+    // Tin nhắn giả mạo AI của Spy: roundNumber → nội dung (1 tin/round)
     private Map<Integer, String> fakeDescriptions = new HashMap<>();
 
     // Vote: roundNumber → (voterId → targetId)
     private Map<Integer, Map<String, String>> votes = new HashMap<>();
 
     // =========================================================
-    // SPY ABILITY - EP-04
+    // VÒNG ĐOÁN VAI TRÒ
+    // Diễn ra 1 lần duy nhất sau Vòng 1
     // =========================================================
 
-    // Spy đã đoán đúng role trong round hiện tại chưa
-    private boolean roleCheckCorrect = false;
+    // Đã qua Vòng Đoán Vai chưa — ngăn lặp lại từ vòng 2 trở đi
+    private boolean roleCheckDone = false;
 
-    // Round nào Spy đoán đúng (dùng để kiểm tra "đoán đúng round này" vs round cũ)
-    private int roleCheckRound = 0;
+    // Kết quả đoán của từng người: userId → true/false (đoán đúng hay sai)
+    // Dùng để tính xu thưởng civilian và mở khóa ability cho Spy
+    private Map<String, Boolean> roleCheckResults = new HashMap<>();
 
-    // Ability nào đang được mở khóa cho Spy
-    // null = chưa mở / không có ability
+    // =========================================================
+    // SPY ABILITY
+    // =========================================================
+
+    // Spy có biết mình là Spy không
+    // true  = đoán đúng ở Vòng Đoán Vai (dù dùng hay không dùng khả năng)
+    // false = đoán sai → Spy không biết mình là Spy cả ván
+    private boolean spyKnowsRole = false;
+
+    // Ability được mở: SpyAbility.fake_message, SpyAbility.infection, hoặc null
     private SpyAbility abilityType = null;
 
-    // Spy đã dùng fake-message chưa (dùng 1 lần duy nhất toàn ván)
-    // true → mất quyền Tha hóa (trade-off)
-    private boolean fakeMessageUsed = false;
+    // Spy chủ động từ chối dùng khả năng → biết mình là Spy nhưng không có khả năng
+    private boolean spyAbilityDeclined = false;
 
-    // Spy đã Tha hóa ai chưa (chỉ được tha hóa 1 lần toàn ván)
+    // Fake message đã dùng vòng này chưa — reset về false đầu mỗi vòng mới
+    // Spy được dùng mỗi vòng 1 lần, miễn AI còn sống
+    private boolean fakeMessageUsedThisRound = false;
+
+    // Spy đã Tha hóa ai chưa — chỉ được 1 lần cả ván
     private boolean infectUsed = false;
 
     // =========================================================
     // ROUND RESULT
     // =========================================================
-    private String eliminatedUserId;   // userId bị loại round này (null khi round mới bắt đầu)
+    private String eliminatedUserId;
     private WinnerRole winnerRole;
 
     // =========================================================
@@ -94,23 +105,22 @@ public class GameSession {
     // GAME STATES
     // =========================================================
     public enum GameState {
-        WAITING,       // Phòng chờ
-        ROLE_ASSIGN,   // Server đang assign vai + keyword
-        ROLE_CHECK,    // Spy đoán vai trò (Round 2+)
-        DESCRIBING,    // Phase mô tả keyword (60s)
-        DISCUSSING,    // Phase thảo luận (90s)
-        VOTING,        // Phase bỏ phiếu (30s)
-        VOTE_TIE,      // Hòa → Sudden Death
-        ROUND_RESULT,  // Hiển thị kết quả round
-        INFECTION,     // Spy chọn người Tha hóa (khi AI bị loại)
-        GAME_OVER      // Game kết thúc
+        WAITING,            // Phòng chờ
+        ROLE_ASSIGN,        // Server assign vai + keyword
+        DESCRIBING,         // Phase mô tả keyword (60s)
+        DISCUSSING,         // Phase thảo luận (90s)
+        VOTING,             // Phase bỏ phiếu (30s)
+        VOTE_TIE,           // Hòa → Sudden Death
+        ROUND_RESULT,       // Hiển thị kết quả round
+        ROLE_CHECK,         // Vòng Đoán Vai — 20s tất cả đoán (sau Vòng 1)
+        ROLE_CHECK_RESULT,  // 20s hiện kết quả riêng tư + Spy chọn Tha Hóa nếu có
+        GAME_OVER           // Game kết thúc
     }
 
     // =========================================================
     // HELPER METHODS
     // =========================================================
 
-    // Lấy player theo userId (trả null nếu không tìm thấy)
     public Player getPlayer(String userId) {
         return players.stream()
                 .filter(p -> p.getUserId().equals(userId))
@@ -118,20 +128,28 @@ public class GameSession {
                 .orElse(null);
     }
 
-    // Lấy danh sách player còn sống
     public List<Player> getAlivePlayers() {
         return players.stream()
                 .filter(Player::isAlive)
                 .toList();
     }
 
-    // Lấy descriptions của round hiện tại
     public Map<String, String> getCurrentRoundDescriptions() {
         return descriptions.getOrDefault(currentRound, new HashMap<>());
     }
 
-    // Lấy votes của round hiện tại
     public Map<String, String> getCurrentRoundVotes() {
         return votes.getOrDefault(currentRound, new HashMap<>());
+    }
+
+    // Người chơi đã gửi kết quả đoán vai chưa
+    public boolean hasSubmittedRoleGuess(String userId) {
+        return roleCheckResults.containsKey(userId);
+    }
+
+    // Tất cả người còn sống đã đoán xong chưa
+    public boolean allPlayersGuessed() {
+        return getAlivePlayers().stream()
+                .allMatch(p -> roleCheckResults.containsKey(p.getUserId()));
     }
 }
