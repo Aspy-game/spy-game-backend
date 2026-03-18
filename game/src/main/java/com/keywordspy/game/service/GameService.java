@@ -1,12 +1,13 @@
 package com.keywordspy.game.service;
 
+import com.keywordspy.game.ai.AIService;
 import com.keywordspy.game.manager.GameStateMachine;
 import com.keywordspy.game.manager.VoteManager;
 import com.keywordspy.game.model.*;
 import com.keywordspy.game.model.GameSession.GameState;
 import com.keywordspy.game.repository.MatchRepository;
 import com.keywordspy.game.repository.RoomRepository;
-import com.keywordspy.game.repository.RoomPlayerRepository; // ← thêm dòng này
+import com.keywordspy.game.repository.RoomPlayerRepository;
 import com.keywordspy.game.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -33,8 +34,9 @@ public class GameService {
 
     @Autowired
     private KeywordService keywordService;
-    @Autowired  // ← thêm cái này
-private RoomPlayerRepository roomPlayerRepository;
+
+    @Autowired
+    private RoomPlayerRepository roomPlayerRepository;
 
     @Autowired
     private RoomRepository roomRepository;
@@ -47,6 +49,9 @@ private RoomPlayerRepository roomPlayerRepository;
 
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
+
+    @Autowired
+    private AIService aiService; // T-042: Inject AIService
 
     // T-018: Bắt đầu game
     public GameSession startGame(String roomId, String hostUserId) {
@@ -81,7 +86,7 @@ private RoomPlayerRepository roomPlayerRepository;
         session.setKeywordPairId(keyword.getId());
         session.setCurrentRound(1);
 
-        // Assign players từ room (tạm thời dùng host + mock players)
+        // Assign players từ room
         List<Player> players = createPlayers(room, savedMatch.getId());
         session.setPlayers(players);
 
@@ -112,6 +117,9 @@ private RoomPlayerRepository roomPlayerRepository;
 
         // Broadcast phase mới
         broadcastPhase(session);
+
+        // T-045: Trigger AI mô tả ngay khi game bắt đầu
+        triggerAIActions(session, GameState.DESCRIBING);
 
         // Update room status
         room.setStatus(RoomStatus.in_game);
@@ -212,7 +220,7 @@ private RoomPlayerRepository roomPlayerRepository;
         chatMsg.put("content", content);
         chatMsg.put("sent_at", LocalDateTime.now().toString());
 
-        messagingTemplate.convertAndSend("/topic/game/" + matchId + "/chat", (Object)chatMsg);
+        messagingTemplate.convertAndSend("/topic/game/" + matchId + "/chat", (Object) chatMsg);
     }
 
     // T-027: Bỏ phiếu
@@ -264,7 +272,6 @@ private RoomPlayerRepository roomPlayerRepository;
             stateMachine.transition(session, GameState.VOTE_TIE);
             broadcastPhase(session);
         } else {
-            // Loại người bị vote nhiều nhất
             eliminatePlayer(session, eliminatedId);
         }
     }
@@ -310,35 +317,39 @@ private RoomPlayerRepository roomPlayerRepository;
         // Tiếp tục round mới
         startNextRound(session);
     }
+
     public void onRoleCheckPhaseEnd(String matchId) {
-    GameSession session = getSession(matchId);
-    if (session.getState() == GameState.ROLE_CHECK) {
-        stateMachine.transition(session, GameState.DESCRIBING);
-        session.setPhaseStartTime(LocalDateTime.now());
-        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DESCRIBE_DURATION));
-        timerService.startDescribeTimer(matchId);
-        broadcastPhase(session);
+        GameSession session = getSession(matchId);
+        if (session.getState() == GameState.ROLE_CHECK) {
+            stateMachine.transition(session, GameState.DESCRIBING);
+            session.setPhaseStartTime(LocalDateTime.now());
+            session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DESCRIBE_DURATION));
+            timerService.startDescribeTimer(matchId);
+            broadcastPhase(session);
+            // T-045: AI mô tả lại mỗi round mới
+            triggerAIActions(session, GameState.DESCRIBING);
+        }
     }
-}
 
     // Bắt đầu round mới
     private void startNextRound(GameSession session) {
-    session.setCurrentRound(session.getCurrentRound() + 1);
+        session.setCurrentRound(session.getCurrentRound() + 1);
 
-    if (session.getCurrentRound() >= 2) {
-        stateMachine.transition(session, GameState.ROLE_CHECK);
-        session.setPhaseStartTime(LocalDateTime.now());
-        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.ROLE_CHECK_DURATION));
-        timerService.startRoleCheckTimer(session.getMatchId()); // ← thêm dòng này
-    } else {
-        stateMachine.transition(session, GameState.DESCRIBING);
-        session.setPhaseStartTime(LocalDateTime.now());
-        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DESCRIBE_DURATION));
-        timerService.startDescribeTimer(session.getMatchId());
+        if (session.getCurrentRound() >= 2) {
+            stateMachine.transition(session, GameState.ROLE_CHECK);
+            session.setPhaseStartTime(LocalDateTime.now());
+            session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.ROLE_CHECK_DURATION));
+            timerService.startRoleCheckTimer(session.getMatchId());
+        } else {
+            stateMachine.transition(session, GameState.DESCRIBING);
+            session.setPhaseStartTime(LocalDateTime.now());
+            session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DESCRIBE_DURATION));
+            timerService.startDescribeTimer(session.getMatchId());
+            triggerAIActions(session, GameState.DESCRIBING);
+        }
+
+        broadcastPhase(session);
     }
-
-    broadcastPhase(session);
-}
 
     // Callback khi hết giờ mô tả
     public void onDescribePhaseEnd(String matchId) {
@@ -370,6 +381,8 @@ private RoomPlayerRepository roomPlayerRepository;
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DISCUSS_DURATION));
         timerService.startDiscussTimer(session.getMatchId());
         broadcastPhase(session);
+        // T-045: AI tham gia thảo luận
+        triggerAIActions(session, GameState.DISCUSSING);
     }
 
     private void moveToVoting(GameSession session) {
@@ -378,12 +391,44 @@ private RoomPlayerRepository roomPlayerRepository;
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.VOTE_DURATION));
         timerService.startVoteTimer(session.getMatchId());
         broadcastPhase(session);
+        // T-046: AI vote tự động
+        triggerAIActions(session, GameState.VOTING);
     }
 
     private boolean allPlayersDescribed(GameSession session) {
         Map<String, String> descriptions = session.getCurrentRoundDescriptions();
         return session.getAlivePlayers().stream()
                 .allMatch(p -> descriptions.containsKey(p.getUserId()));
+    }
+
+    // T-045, T-046: Trigger AI actions theo phase
+    public void triggerAIActions(GameSession session, GameState phase) {
+        List<Player> aiPlayers = session.getAlivePlayers().stream()
+                .filter(Player::isAi)
+                .toList();
+
+        for (Player ai : aiPlayers) {
+            String keyword = session.getCivilianKeyword();
+            switch (phase) {
+                case DESCRIBING -> {
+                    String desc = aiService.generateDescription(keyword);
+                    submitDescription(session.getMatchId(), ai.getUserId(), desc);
+                }
+                case DISCUSSING -> {
+                    Map<String, String> descriptions = session.getCurrentRoundDescriptions();
+                    String msg = aiService.generateChatMessage(keyword, descriptions);
+                    submitChat(session.getMatchId(), ai.getUserId(), msg);
+                }
+                case VOTING -> {
+                    Map<String, String> descriptions = session.getCurrentRoundDescriptions();
+                    String targetId = aiService.generateVoteTarget(keyword, descriptions, ai.getUserId());
+                    if (targetId != null) {
+                        submitVote(session.getMatchId(), ai.getUserId(), targetId);
+                    }
+                }
+                default -> {}
+            }
+        }
     }
 
     // Broadcast role cho từng player (private)
@@ -427,7 +472,7 @@ private RoomPlayerRepository roomPlayerRepository;
             return pm;
         }).toList());
 
-        messagingTemplate.convertAndSend("/topic/game/" + session.getMatchId(), (Object)phaseMsg);
+        messagingTemplate.convertAndSend("/topic/game/" + session.getMatchId(), (Object) phaseMsg);
     }
 
     // Broadcast descriptions
