@@ -1,15 +1,15 @@
 package com.keywordspy.game.service;
 
-import com.keywordspy.game.model.Room;
-import com.keywordspy.game.model.RoomStatus;
+import com.keywordspy.game.model.*;
+import com.keywordspy.game.repository.RoomPlayerRepository;
 import com.keywordspy.game.repository.RoomRepository;
+import com.keywordspy.game.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.PageRequest;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Optional;
-import java.util.Random;
+import java.util.*;
+
 
 @Service
 public class RoomService {
@@ -17,38 +17,36 @@ public class RoomService {
     @Autowired
     private RoomRepository roomRepository;
 
-    private static final String CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    private static final int ROOM_CODE_LENGTH = 8;
+    @Autowired
+    private RoomPlayerRepository roomPlayerRepository;
 
-    // Tạo room code ngẫu nhiên 8 ký tự
-    private String generateRoomCode() {
-        Random random = new Random();
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < ROOM_CODE_LENGTH; i++) {
-            sb.append(CHARACTERS.charAt(random.nextInt(CHARACTERS.length())));
-        }
-        return sb.toString();
-    }
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
 
     // Tạo phòng mới
-    public Room createRoom(String hostId, boolean isPrivate) {
-        String roomCode;
-        // Đảm bảo room code không bị trùng
-        do {
-            roomCode = generateRoomCode();
-        } while (roomRepository.findByRoomCode(roomCode).isPresent());
+    public Room createRoom(String hostUserId, boolean isPrivate) {
+        User host = userRepository.findById(hostUserId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
         Room room = new Room();
-        room.setRoomCode(roomCode);
-        room.setHostId(hostId);
+        room.setRoomCode(generateRoomCode());
+        room.setHostId(hostUserId);
         room.setPrivate(isPrivate);
-        room.setCurrentPlayers(1); // host là người đầu tiên
+        room.setCurrentPlayers(1);
         room.setStatus(RoomStatus.waiting);
+        Room savedRoom = roomRepository.save(room);
 
-        return roomRepository.save(room);
+        // Thêm host vào room_players
+        addPlayerToRoom(savedRoom.getId(), host);
+
+        return savedRoom;
     }
 
-    // Tham gia phòng bằng room code
+    // Join phòng bằng roomCode
+
     public Room joinRoom(String roomCode, String userId) {
         Room room = roomRepository.findByRoomCode(roomCode)
                 .orElseThrow(() -> new RuntimeException("Room not found"));
@@ -61,38 +59,107 @@ public class RoomService {
             throw new RuntimeException("Room is full");
         }
 
+        // Kiểm tra đã trong phòng chưa
+        if (roomPlayerRepository.findByRoomIdAndUserId(room.getId(), userId).isPresent()) {
+            return room; // Đã trong phòng rồi, trả về luôn
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        addPlayerToRoom(room.getId(), user);
+
+        // Cập nhật số người
         room.setCurrentPlayers(room.getCurrentPlayers() + 1);
-        return roomRepository.save(room);
+        Room savedRoom = roomRepository.save(room);
+
+        // Broadcast cập nhật lobby
+        broadcastRoomUpdate(savedRoom);
+
+        return savedRoom;
     }
 
     // Rời phòng
-    public Room leaveRoom(String roomCode, String userId) {
-        Room room = roomRepository.findByRoomCode(roomCode)
+    public void leaveRoom(String roomId, String userId) {
+        Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new RuntimeException("Room not found"));
 
-        if (room.getCurrentPlayers() > 0) {
-            room.setCurrentPlayers(room.getCurrentPlayers() - 1);
+        roomPlayerRepository.deleteByRoomIdAndUserId(roomId, userId);
+
+        room.setCurrentPlayers(Math.max(0, room.getCurrentPlayers() - 1));
+
+        // Nếu host rời → assign host mới hoặc đóng phòng
+        if (room.getHostId().equals(userId)) {
+            List<RoomPlayer> remaining = roomPlayerRepository.findByRoomId(roomId);
+            if (remaining.isEmpty()) {
+                room.setStatus(RoomStatus.finished);
+            } else {
+                room.setHostId(remaining.get(0).getUserId());
+            }
         }
 
-        // Nếu không còn ai thì xóa phòng
-        if (room.getCurrentPlayers() == 0) {
-            roomRepository.delete(room);
-            return null;
+        roomRepository.save(room);
+        broadcastRoomUpdate(room);
+    }
+
+    // Danh sách phòng công khai đang chờ
+    public List<Room> getPublicRooms() {
+        return roomRepository.findByStatusAndIsPrivate(RoomStatus.waiting, false);
+    }
+
+    // Danh sách players trong phòng
+    public List<RoomPlayer> getPlayersInRoom(String roomId) {
+        return roomPlayerRepository.findByRoomId(roomId);
+    }
+
+    // Lấy room theo ID
+    public Room getRoomById(String roomId) {
+        return roomRepository.findById(roomId)
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+    }
+
+    // Helper: thêm player vào collection room_players
+    private void addPlayerToRoom(String roomId, User user) {
+        RoomPlayer rp = new RoomPlayer();
+        rp.setRoomId(roomId);
+        rp.setUserId(user.getId());
+        rp.setUsername(user.getUsername());
+        rp.setDisplayName(user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
+        roomPlayerRepository.save(rp);
+    }
+
+    // Helper: generate room code 8 ký tự
+    private String generateRoomCode() {
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        StringBuilder code = new StringBuilder();
+        Random random = new Random();
+        for (int i = 0; i < 8; i++) {
+            code.append(chars.charAt(random.nextInt(chars.length())));
         }
-
-        return roomRepository.save(room);
+        // Đảm bảo unique
+        if (roomRepository.findByRoomCode(code.toString()).isPresent()) {
+            return generateRoomCode();
+        }
+        return code.toString();
     }
 
-    // Lấy danh sách phòng đang chờ (public)
-    public List<Room> getWaitingRooms(int page, int size) {
-        return roomRepository.findAll(PageRequest.of(page, size))
-                .stream()
-                .filter(r -> r.getStatus() == RoomStatus.waiting && !r.isPrivate())
-                .toList();
-    }
+    // Broadcast cập nhật phòng qua WebSocket
+    private void broadcastRoomUpdate(Room room) {
+        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+        Map<String, Object> update = new HashMap<>();
+        update.put("room_id", room.getId());
+        update.put("room_code", room.getRoomCode());
+        update.put("host_id", room.getHostId());
+        update.put("current_players", room.getCurrentPlayers());
+        update.put("status", room.getStatus().toString());
+        update.put("players", players.stream().map(p -> {
+            Map<String, Object> pm = new HashMap<>();
+            pm.put("user_id", p.getUserId());
+            pm.put("display_name", p.getDisplayName());
+            return pm;
+        }).toList());
 
-    // Tìm phòng theo room code
-    public Optional<Room> findByRoomCode(String roomCode) {
-        return roomRepository.findByRoomCode(roomCode);
+        messagingTemplate.convertAndSend("/topic/room/" + room.getId(), (Object) update);
+
     }
 }
