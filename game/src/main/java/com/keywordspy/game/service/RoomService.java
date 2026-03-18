@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 
+
 @Service
 public class RoomService {
 
@@ -45,6 +46,7 @@ public class RoomService {
     }
 
     // Join phòng bằng roomCode
+
     public Room joinRoom(String roomCode, String userId) {
         Room room = roomRepository.findByRoomCode(roomCode)
                 .orElseThrow(() -> new RuntimeException("Room not found"));
@@ -52,6 +54,7 @@ public class RoomService {
         if (room.getStatus() != RoomStatus.waiting) {
             throw new RuntimeException("Room is not available");
         }
+
         if (room.getCurrentPlayers() >= room.getMaxPlayers()) {
             throw new RuntimeException("Room is full");
         }
@@ -157,5 +160,6 @@ public class RoomService {
         }).toList());
 
         messagingTemplate.convertAndSend("/topic/room/" + room.getId(), (Object) update);
+
     }
 }

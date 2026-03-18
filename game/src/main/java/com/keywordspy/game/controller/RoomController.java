@@ -4,6 +4,7 @@ import com.keywordspy.game.model.*;
 import com.keywordspy.game.service.RoomService;
 import com.keywordspy.game.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -46,6 +47,8 @@ public class RoomController {
                     "status", room.getStatus().toString(),
                     "current_players", room.getCurrentPlayers()
             ));
+
+
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -64,6 +67,7 @@ public class RoomController {
                     "status", r.getStatus().toString()
             )).toList();
 
+
             return ResponseEntity.ok(Map.of(
                     "rooms", roomList,
                     "total", roomList.size()
@@ -74,6 +78,7 @@ public class RoomController {
     }
 
     // POST /api/rooms/:roomCode/join — Tham gia phòng
+
     @PostMapping("/{roomCode}/join")
     public ResponseEntity<?> joinRoom(@PathVariable String roomCode) {
         try {
@@ -90,6 +95,7 @@ public class RoomController {
                             "display_name", p.getDisplayName()
                     )).toList()
             ));
+
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -101,6 +107,7 @@ public class RoomController {
         try {
             User user = getCurrentUser();
             roomService.leaveRoom(roomId, user.getId());
+
             return ResponseEntity.ok(Map.of("message", "Left room"));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -119,6 +126,7 @@ public class RoomController {
                             "display_name", p.getDisplayName()
                     )).toList()
             ));
+
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
