@@ -42,11 +42,11 @@ public class JwtService {
     }
 
     public String generateAccessToken(UserDetails userDetails) {
-        return generateToken(new HashMap<>(), userDetails, ACCESS_TOKEN_EXPIRATION);
+        return generateToken(new HashMap<>(), userDetails, accessTokenExpiration);
     }
 
     public String generateRefreshToken(UserDetails userDetails) {
-        return generateToken(new HashMap<>(), userDetails, REFRESH_TOKEN_EXPIRATION);
+        return generateToken(new HashMap<>(), userDetails, refreshTokenExpiration);
     }
 
     public String generateToken(Map<String, Object> extraClaims, UserDetails userDetails, long expiration) {
