@@ -3,7 +3,9 @@ package com.keywordspy.game.service;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
@@ -16,13 +18,17 @@ import java.util.function.Function;
 @Service
 public class JwtService {
 
-    // In production, this should be in application.properties
-    private static final String SECRET_KEY = "your-very-secure-and-long-secret-key-for-spy-game";
-    public static final long ACCESS_TOKEN_EXPIRATION = 3600000; // 1 hour (3600 seconds)
-    public static final long REFRESH_TOKEN_EXPIRATION = 604800000; // 7 days
+    @Value("${jwt.secret}")
+    private String secretKey;
+    
+    @Value("${jwt.expiration}")
+    private long accessTokenExpiration;
+    
+    @Value("${jwt.refresh-token.expiration}")
+    private long refreshTokenExpiration;
 
     private Key getSigningKey() {
-        byte[] keyBytes = SECRET_KEY.getBytes();
+        byte[] keyBytes = Decoders.BASE64.decode(secretKey);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
@@ -75,6 +81,6 @@ public class JwtService {
     }
     
     public long getAccessTokenExpirationInSeconds() {
-        return ACCESS_TOKEN_EXPIRATION / 1000;
+        return accessTokenExpiration / 1000;
     }
 }
