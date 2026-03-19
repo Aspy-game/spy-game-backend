@@ -162,4 +162,16 @@ public class RoomService {
         messagingTemplate.convertAndSend("/topic/room/" + room.getId(), (Object) update);
 
     }
+
+    public List<Room> findAllRooms() {
+        return roomRepository.findAll();
+    }
+
+    public void deleteRoom(String roomId) {
+        roomRepository.deleteById(roomId);
+    }
+
+    public long countActiveRooms() {
+        return roomRepository.count();
+    }
 }

@@ -2,6 +2,7 @@ package com.keywordspy.game.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.keywordspy.game.model.Role;
 import lombok.Builder;
 import lombok.Data;
 
@@ -25,4 +26,6 @@ public class AuthResponse {
     
     @JsonProperty("expires_in")
     private Long expiresIn;
+
+    private Role role;
 }
