@@ -14,6 +14,7 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 @Slf4j
 public class EconomyService {
 
@@ -97,13 +98,12 @@ public class EconomyService {
     }
 
     private void logTransaction(String userId, int amount, Transaction.TransactionType type, String description) {
-        Transaction transaction = Transaction.builder()
-                .userId(userId)
-                .amount(amount)
-                .type(type)
-                .description(description)
-                .createdAt(LocalDateTime.now())
-                .build();
+        Transaction transaction = new Transaction();
+        transaction.setUserId(userId);
+        transaction.setAmount(amount);
+        transaction.setType(type);
+        transaction.setDescription(description);
+        transaction.setCreatedAt(LocalDateTime.now());
         transactionRepository.save(transaction);
     }
 }
