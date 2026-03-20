@@ -35,7 +35,8 @@ public class RoomController {
         try {
             User user = getCurrentUser();
             boolean isPrivate = body != null && Boolean.TRUE.equals(body.get("is_private"));
-            Room room = roomService.createRoom(user.getId(), isPrivate);
+            String customRoomCode = body != null ? (String) body.get("room_code") : null;
+            Room room = roomService.createRoom(user.getId(), isPrivate, customRoomCode);
 
             return ResponseEntity.status(201).body(Map.of(
                     "room_id", room.getId(),

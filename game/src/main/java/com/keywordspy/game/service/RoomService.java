@@ -27,12 +27,20 @@ public class RoomService {
     private SimpMessagingTemplate messagingTemplate;
 
     // Tạo phòng mới
-    public Room createRoom(String hostUserId, boolean isPrivate) {
+    public Room createRoom(String hostUserId, boolean isPrivate, String customRoomCode) {
         User host = userRepository.findById(hostUserId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
         Room room = new Room();
-        room.setRoomCode(generateRoomCode());
+        if (customRoomCode != null && !customRoomCode.trim().isEmpty()) {
+            // Check if exists
+            if (roomRepository.findByRoomCode(customRoomCode).isPresent()) {
+                throw new RuntimeException("Room code already exists");
+            }
+            room.setRoomCode(customRoomCode);
+        } else {
+            room.setRoomCode(generateRoomCode());
+        }
         room.setHostId(hostUserId);
         room.setPrivate(isPrivate);
         room.setCurrentPlayers(1);
