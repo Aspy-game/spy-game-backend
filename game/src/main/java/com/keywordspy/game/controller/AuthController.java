@@ -51,6 +51,7 @@ public class AuthController {
                     .userId(user.getId())
                     .username(user.getUsername())
                     .displayName(user.getDisplayName())
+                    .avatarUrl(user.getAvatarUrl())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .build();
@@ -78,6 +79,7 @@ public class AuthController {
             AuthResponse response = AuthResponse.builder()
                     .userId(user.getId())
                     .displayName(user.getDisplayName())
+                    .avatarUrl(user.getAvatarUrl())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
