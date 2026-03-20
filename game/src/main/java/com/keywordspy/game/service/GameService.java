@@ -32,6 +32,7 @@ public class GameService {
     @Autowired private MatchRepository matchRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private SimpMessagingTemplate messagingTemplate;
+    @Autowired private EconomyService economyService;
 
     // =========================================================
     // SECTION 1: GAME SETUP
@@ -45,6 +46,13 @@ public class GameService {
             throw new RuntimeException("Only host can start the game");
         if (room.getCurrentPlayers() < 2)
             throw new RuntimeException("Need at least 2 players to start");
+
+        // --- ECONOMY SYSTEM: Thu phí vào cửa ---
+        List<RoomPlayer> roomPlayers = roomPlayerRepository.findByRoomId(room.getId());
+        for (RoomPlayer rp : roomPlayers) {
+            economyService.deductEntryFee(rp.getUserId(), 100);
+        }
+        // ---------------------------------------
 
         KeywordPair keyword = keywordService.getRandomKeyword();
 
@@ -247,10 +255,14 @@ public class GameService {
 
             if (!isSpy) {
                 // === CIVILIAN ===
-                if (correct) {
-                    result.put("message", "Chính xác! Bạn là Dân Thường");
-                    result.put("reward_coins", true);
-                } else {
+            if (correct) {
+                result.put("message", "Chính xác! Bạn là Dân Thường");
+                result.put("reward_coins", true);
+                
+                // --- ECONOMY SYSTEM: Thưởng đoán đúng vai ---
+                economyService.addReward(uid, 20, Transaction.TransactionType.GUESS_BONUS, "Đoán đúng vai Civilian", true);
+                // --------------------------------------------
+            } else {
                     result.put("message", "Sai rồi! Không nhận được xu");
                     result.put("reward_coins", false);
                 }
@@ -268,7 +280,11 @@ public class GameService {
                     // Spy đoán đúng → biết mình là Spy
                     session.setSpyKnowsRole(true);
                     result.put("message", "Chính xác! Bạn là Gián Điệp");
-                    result.put("reward_coins", false); // Spy không nhận xu
+                    result.put("reward_coins", true); // Spy nhận xu khi đoán đúng
+
+                    // --- ECONOMY SYSTEM: Thưởng Spy đoán đúng vai ---
+                    economyService.addReward(uid, 50, Transaction.TransactionType.GUESS_BONUS, "Spy đoán đúng vai", true);
+                    // ------------------------------------------------
 
                     if (aiAlive) {
                         // AI còn sống → offer Giả Mạo AI
@@ -362,6 +378,10 @@ public class GameService {
 
         session.setFakeMessageUsedThisRound(true);
         session.getFakeDescriptions().put(session.getCurrentRound(), content);
+
+        // --- ECONOMY SYSTEM: Thưởng kỹ năng Spy ---
+        economyService.addReward(userId, 30, Transaction.TransactionType.SKILL_BONUS, "Kỹ năng Giả Mạo AI", true);
+        // ------------------------------------------
 
         // Broadcast như tin của AI — FE không biết là fake
         Map<String, Object> fakeMsg = new HashMap<>();
@@ -707,6 +727,10 @@ public class GameService {
         gameOver.put("civilian_keyword", session.getCivilianKeyword());
         gameOver.put("spy_keyword", session.getSpyKeyword());
 
+        // --- ECONOMY SYSTEM: Phát thưởng ---
+        processEndGameRewards(session);
+        // ------------------------------------
+
         if (session.getInfectedUserId() != null) {
             Player infected = session.getPlayer(session.getInfectedUserId());
             if (infected != null) {
@@ -747,6 +771,37 @@ public class GameService {
     private boolean isAiAlive(GameSession session) {
         return session.getPlayers().stream().anyMatch(p -> p.isAi() && p.isAlive());
     }
+
+    // --- ECONOMY SYSTEM: Logic tính toán thưởng cuối ván ---
+    private void processEndGameRewards(GameSession session) {
+        String matchId = session.getMatchId();
+        WinnerRole winner = session.getWinnerRole();
+
+        if (winner == WinnerRole.spy) {
+            // SPY THẮNG: Thưởng Spy 350, Infected 120, Last Survivor 70
+            economyService.addReward(session.getSpyUserId(), 350, Transaction.TransactionType.WIN_REWARD, "Spy Thắng Ván: " + matchId, true);
+
+            if (session.getInfectedUserId() != null) {
+                Player infected = session.getPlayer(session.getInfectedUserId());
+                if (infected != null && infected.isAlive()) {
+                    economyService.addReward(session.getInfectedUserId(), 120, Transaction.TransactionType.WIN_REWARD, "Infected Thắng Ván: " + matchId, true);
+                }
+            }
+
+            // Dân thường sống sót cuối cùng (không tính spy/infected)
+            session.getAlivePlayers().stream()
+                .filter(p -> !p.isAi() && !p.getUserId().equals(session.getSpyUserId()) && !p.getUserId().equals(session.getInfectedUserId()))
+                .findFirst()
+                .ifPresent(p -> economyService.addReward(p.getUserId(), 70, Transaction.TransactionType.WIN_REWARD, "Dân thường sống sót cuối cùng ván: " + matchId, true));
+
+        } else if (winner == WinnerRole.civilians) {
+            // DÂN THƯỜNG THẮNG: Mỗi dân thường (sống/chết) nhận 135
+            session.getPlayers().stream()
+                .filter(p -> !p.isAi() && p.getRole() == PlayerRole.civilian && !p.getUserId().equals(session.getInfectedUserId()))
+                .forEach(p -> economyService.addReward(p.getUserId(), 135, Transaction.TransactionType.WIN_REWARD, "Dân thường Thắng Ván: " + matchId, true));
+        }
+    }
+    // ----------------------------------------------------
 
     private boolean allPlayersDescribed(GameSession session) {
         Map<String, String> descriptions = session.getCurrentRoundDescriptions();
