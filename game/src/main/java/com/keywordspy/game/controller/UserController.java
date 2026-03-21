@@ -53,6 +53,12 @@ public class UserController {
             response.put("avatar_url", user.getAvatarUrl() != null ? user.getAvatarUrl() : "");
             response.put("email", user.getEmail());
             response.put("created_at", user.getCreatedAt().toString());
+            
+            // --- ECONOMY INFO ---
+            response.put("balance", user.getBalance());
+            response.put("ranking_points", user.getRankingPoints());
+            // --------------------
+
             response.put("stats", statsMap);
 
             return ResponseEntity.ok(response);

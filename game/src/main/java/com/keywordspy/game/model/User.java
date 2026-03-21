@@ -28,5 +28,10 @@ public class User {
 
     private boolean active = true;
 
+    // --- ECONOMY SYSTEM ---
+    private int balance = 500; // Mặc định tặng 500 xu cho người chơi mới
+    private int rankingPoints = 0; // Điểm xếp hạng trọn đời (chỉ tăng không giảm)
+    // ----------------------
+
     private LocalDateTime createdAt = LocalDateTime.now();
 }
