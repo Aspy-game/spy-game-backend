@@ -33,6 +33,7 @@ public class GameService {
     @Autowired private UserRepository userRepository;
     @Autowired private SimpMessagingTemplate messagingTemplate;
     @Autowired private EconomyService economyService;
+    @Autowired private SettingsService settingsService;
 
     // =========================================================
     // SECTION 1: GAME SETUP
@@ -75,6 +76,8 @@ public class GameService {
         session.setPlayers(players);
 
         List<Player> humanPlayers = players.stream().filter(p -> !p.isAi()).toList();
+        int spiesCfg = settingsService.find().map(s -> s.getSpiesCount() != null ? s.getSpiesCount() : 1).orElse(1);
+        int spiesCount = Math.max(1, Math.min(1, spiesCfg));
         Player spy = humanPlayers.get(new Random().nextInt(humanPlayers.size()));
         spy.setRole(PlayerRole.spy);
         session.setSpyUserId(spy.getUserId());
@@ -510,6 +513,7 @@ public class GameService {
         session.setPhaseStartTime(LocalDateTime.now());
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.ROLE_CHECK_DURATION));
         timerService.startRoleCheckTimer(session.getMatchId());
+        autoRoleCheckForAi(session);
         broadcastPhase(session);
     }
 
@@ -529,6 +533,7 @@ public class GameService {
         session.setPhaseStartTime(LocalDateTime.now());
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DESCRIBE_DURATION));
         timerService.startDescribeTimer(session.getMatchId());
+        autoDescribeForAi(session);
         broadcastPhase(session);
     }
 
@@ -545,6 +550,7 @@ public class GameService {
         session.setPhaseStartTime(LocalDateTime.now());
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.VOTE_DURATION));
         timerService.startVoteTimer(session.getMatchId());
+        autoVoteForAi(session);
         broadcastPhase(session);
     }
 
@@ -617,6 +623,69 @@ public class GameService {
     // =========================================================
     // SECTION 8: STATE & RESULT QUERIES
     // =========================================================
+
+    private void autoRoleCheckForAi(GameSession session) {
+        if (session.getState() != GameState.ROLE_CHECK) return;
+        for (Player p : session.getAlivePlayers()) {
+            if (p.isAi() && !session.hasSubmittedRoleGuess(p.getUserId())) {
+                try {
+                    submitRoleGuess(session.getMatchId(), p.getUserId(), "civilian");
+                } catch (Exception ignored) { }
+            }
+        }
+    }
+
+    private void autoDescribeForAi(GameSession session) {
+        if (session.getState() != GameState.DESCRIBING) return;
+        for (Player p : session.getAlivePlayers()) {
+            if (p.isAi()) {
+                Map<String, String> roundDesc = session.getDescriptions()
+                        .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
+                if (!roundDesc.containsKey(p.getUserId())) {
+                    try {
+                        String content = generateAiDescription(session);
+                        // Bỏ qua validation độ dài để an toàn
+                        roundDesc.put(p.getUserId(), content);
+                    } catch (Exception ignored) { }
+                }
+            }
+        }
+        broadcastDescriptions(session);
+    }
+
+    private String generateAiDescription(GameSession session) {
+        String key = session.getCivilianKeyword();
+        String[] templates = new String[]{
+                "Liên tưởng đến " + key + " nhưng không trực tiếp",
+                "Gợi nhớ một thứ gần với " + key,
+                "Hơi hướng " + key + ", khá trừu tượng",
+                "Nghĩ về chủ đề như " + key + " nhưng khác chữ",
+                "Cảm giác tương tự " + key + " ở bối cảnh khác"
+        };
+        return templates[new Random().nextInt(templates.length)];
+    }
+
+    private void autoVoteForAi(GameSession session) {
+        if (session.getState() != GameState.VOTING) return;
+        List<Player> alive = session.getAlivePlayers();
+        Map<String, String> currentVotes = session.getVotes()
+                .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
+
+        for (Player ai : alive) {
+            if (!ai.isAi()) continue;
+            if (currentVotes.containsKey(ai.getUserId())) continue;
+
+            List<Player> candidates = new ArrayList<>();
+            for (Player t : alive) {
+                if (!t.getUserId().equals(ai.getUserId())) candidates.add(t);
+            }
+            if (candidates.isEmpty()) continue;
+            Player target = candidates.get(new Random().nextInt(candidates.size()));
+            try {
+                submitVote(session.getMatchId(), ai.getUserId(), target.getUserId());
+            } catch (Exception ignored) { }
+        }
+    }
 
     public Map<String, Object> getGameState(String matchId, String userId) {
         GameSession session = getSession(matchId);

@@ -54,6 +54,7 @@ public class AuthController {
                     .username(user.getUsername())
                     .displayName(user.getDisplayName())
                     .avatarUrl(user.getAvatarUrl())
+                    .role(user.getRole())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
@@ -69,14 +70,16 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
         try {
-            authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword())
-            );
+            String principal = (request.getUsername() != null && !request.getUsername().isBlank())
+                    ? request.getUsername()
+                    : request.getEmail();
 
-            User user = userService.findByUsernameOrEmail(request.getUsername())
+            authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(principal, request.getPassword()));
+
+            User user = userService.findByUsernameOrEmail(principal)
                     .orElseThrow(() -> new RuntimeException("User not found after authentication"));
 
-            UserDetails userDetails = userService.loadUserByUsername(request.getUsername());
+            UserDetails userDetails = userService.loadUserByUsername(principal);
             String accessToken = jwtService.generateAccessToken(userDetails);
             String refreshToken = jwtService.generateRefreshToken(userDetails);
 
@@ -85,6 +88,7 @@ public class AuthController {
                     .username(user.getUsername())
                     .displayName(user.getDisplayName())
                     .avatarUrl(user.getAvatarUrl())
+                    .role(user.getRole())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .expiresIn(jwtService.getAccessTokenExpirationInSeconds())

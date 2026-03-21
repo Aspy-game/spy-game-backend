@@ -26,6 +26,8 @@ public class RoomService {
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
 
+    @Autowired
+    private SettingsService settingsService;
     // Tạo phòng mới
     public Room createRoom(String hostUserId, boolean isPrivate, String customRoomCode) {
         User host = userRepository.findById(hostUserId)
@@ -43,7 +45,14 @@ public class RoomService {
         }
         room.setHostId(hostUserId);
         room.setPrivate(isPrivate);
-        room.setCurrentPlayers(0); // Sẽ được tăng lên trong addPlayerToRoom
+        room.setCurrentPlayers(0);
+        if (settingsService != null) {
+            settingsService.find().ifPresent(s -> {
+                if (s.getMaxPlayers() != null && s.getMaxPlayers() > 0) {
+                    room.setMaxPlayers(s.getMaxPlayers());
+                }
+            });
+        }
         room.setStatus(RoomStatus.waiting);
         Room savedRoom = roomRepository.save(room);
 
