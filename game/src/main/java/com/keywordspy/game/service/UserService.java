@@ -89,6 +89,15 @@ public class UserService implements UserDetailsService {
         return savedUser;
     }
 
+    public User registerUser(String username, String email, String password, String displayName, Role role) {
+        User user = registerUser(username, email, password, displayName);
+        if (role != null && role != user.getRole()) {
+            user.setRole(role);
+            user = userRepository.save(user);
+        }
+        return user;
+    }
+
     public User saveUser(User user) {
         return userRepository.save(user);
     }
@@ -121,3 +130,4 @@ public class UserService implements UserDetailsService {
         user.setRole(role);
         return userRepository.save(user);
     }
+}

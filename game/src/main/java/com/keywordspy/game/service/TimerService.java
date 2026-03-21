@@ -26,11 +26,11 @@ public class TimerService {
     // THỜI GIAN MỖI PHASE (giây)
     // Đang để 300s (5 phút) để tiện test — chỉnh lại khi release
     // =========================================================
-    public static final int DESCRIBE_DURATION          = 300; // thực tế: 60s
-    public static final int DISCUSS_DURATION           = 300; // thực tế: 90s
-    public static final int VOTE_DURATION              = 300; // thực tế: 30s
-    public static final int ROLE_CHECK_DURATION        = 300; // thực tế: 20s (phase đoán)
-    public static final int ROLE_CHECK_RESULT_DURATION = 300; // thực tế: 20s (phase kết quả + Spy chọn Tha Hóa)
+    public static final int DESCRIBE_DURATION          = 300;
+    public static final int DISCUSS_DURATION           = 300;
+    public static final int VOTE_DURATION              = 300;
+    public static final int ROLE_CHECK_DURATION        = 300;
+    public static final int ROLE_CHECK_RESULT_DURATION = 300;
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
     private final Map<String, ScheduledFuture<?>> activeTimers = new ConcurrentHashMap<>();
@@ -39,35 +39,43 @@ public class TimerService {
     @Lazy
     private GameService gameService;
 
+    @Autowired
+    private SettingsService settingsService;
+
 
     // =========================================================
     // START TIMERS
     // =========================================================
 
     public void startDescribeTimer(String matchId) {
-        startTimer(matchId, DESCRIBE_DURATION, () ->
+        int d = settingsService.find().map(s -> s.getDescribeDuration() != null ? s.getDescribeDuration() : DESCRIBE_DURATION).orElse(DESCRIBE_DURATION);
+        startTimer(matchId, d, () ->
                 gameService.onDescribePhaseEnd(matchId));
     }
 
     public void startDiscussTimer(String matchId) {
-        startTimer(matchId, DISCUSS_DURATION, () ->
+        int d = settingsService.find().map(s -> s.getDiscussDuration() != null ? s.getDiscussDuration() : DISCUSS_DURATION).orElse(DISCUSS_DURATION);
+        startTimer(matchId, d, () ->
                 gameService.onDiscussPhaseEnd(matchId));
     }
 
     public void startVoteTimer(String matchId) {
-        startTimer(matchId, VOTE_DURATION, () ->
+        int d = settingsService.find().map(s -> s.getVoteDuration() != null ? s.getVoteDuration() : VOTE_DURATION).orElse(VOTE_DURATION);
+        startTimer(matchId, d, () ->
                 gameService.onVotePhaseEnd(matchId));
     }
 
     // Phase ROLE_CHECK: 20s tất cả đoán vai trò
     public void startRoleCheckTimer(String matchId) {
-        startTimer(matchId, ROLE_CHECK_DURATION, () ->
+        int d = settingsService.find().map(s -> s.getRoleCheckDuration() != null ? s.getRoleCheckDuration() : ROLE_CHECK_DURATION).orElse(ROLE_CHECK_DURATION);
+        startTimer(matchId, d, () ->
                 gameService.onRoleCheckPhaseEnd(matchId));
     }
 
     // Phase ROLE_CHECK_RESULT: 20s hiện kết quả cá nhân + Spy chọn Tha Hóa
     public void startRoleCheckResultTimer(String matchId) {
-        startTimer(matchId, ROLE_CHECK_RESULT_DURATION, () ->
+        int d = settingsService.find().map(s -> s.getRoleCheckResultDuration() != null ? s.getRoleCheckResultDuration() : ROLE_CHECK_RESULT_DURATION).orElse(ROLE_CHECK_RESULT_DURATION);
+        startTimer(matchId, d, () ->
                 gameService.onRoleCheckResultPhaseEnd(matchId));
     }
 
