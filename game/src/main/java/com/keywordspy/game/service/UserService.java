@@ -13,6 +13,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -44,19 +45,27 @@ public class UserService implements UserDetailsService {
         User user = userRepository.findByUsername(usernameOrEmail)
                 .or(() -> userRepository.findByEmail(usernameOrEmail))
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with username or email: " + usernameOrEmail));
-        
+
         return new org.springframework.security.core.userdetails.User(
-                user.getUsername() != null ? user.getUsername() : user.getEmail(), 
-                user.getPasswordHash(), 
-                user.isActive(), // enabled
-                true, // accountNonExpired
-                true, // credentialsNonExpired
-                true, // accountNonLocked
+                user.getUsername() != null ? user.getUsername() : user.getEmail(),
+                user.getPasswordHash(),
+                user.isActive(),
+                true,
+                true,
+                true,
+
                 Collections.singletonList(new SimpleGrantedAuthority(user.getRole().name()))
         );
     }
 
-    public User registerUser(String username, String email, String password, String displayName, Role role) {
+    public User registerUser(String username, String email, String password, String displayName) {
+        if (email == null || email.isBlank()) {
+            throw new RuntimeException("Email is required");
+        }
+        if (username == null || username.isBlank()) {
+            throw new RuntimeException("Username is required");
+        }
+
         if (userRepository.findByUsername(username).isPresent()) {
             throw new RuntimeException("Username already exists");
         }
@@ -69,15 +78,17 @@ public class UserService implements UserDetailsService {
         user.setEmail(email);
         user.setDisplayName(displayName);
         user.setPasswordHash(passwordEncoder.encode(password));
-        user.setRole(role != null ? role : Role.ROLE_USER);
-        User savedUser = userRepository.save(user);             
-        
+        user.setRole(Role.ROLE_USER);
+        User savedUser = userRepository.save(user);
+
+
         UserStats stats = new UserStats();
         stats.setUserId(savedUser.getId());
         userStatsRepository.save(stats);
 
         return savedUser;
     }
+
     public User saveUser(User user) {
         return userRepository.save(user);
     }
@@ -110,4 +121,3 @@ public class UserService implements UserDetailsService {
         user.setRole(role);
         return userRepository.save(user);
     }
-}
