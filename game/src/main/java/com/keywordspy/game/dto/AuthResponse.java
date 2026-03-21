@@ -18,6 +18,9 @@ public class AuthResponse {
     @JsonProperty("display_name")
     private String displayName;
     
+    @JsonProperty("avatar_url")
+    private String avatarUrl;
+    
     @JsonProperty("access_token")
     private String accessToken;
     

@@ -20,6 +20,8 @@ public class User {
 
     private String displayName;
 
+    private String avatarUrl;
+
     private String passwordHash;
     
     private Role role = Role.ROLE_USER; // Default role
