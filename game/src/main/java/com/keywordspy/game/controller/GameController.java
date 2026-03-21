@@ -5,6 +5,7 @@ import com.keywordspy.game.model.User;
 import com.keywordspy.game.service.GameService;
 import com.keywordspy.game.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -18,9 +19,9 @@ public class GameController {
 
     @Autowired
     private GameService gameService;
-
     @Autowired
     private UserService userService;
+
 
     private User getCurrentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -29,6 +30,7 @@ public class GameController {
     }
 
     // T-018: POST /rooms/:roomId/start
+
     @PostMapping("/rooms/{roomId}/start")
     public ResponseEntity<?> startGame(@PathVariable String roomId) {
         try {
@@ -45,18 +47,20 @@ public class GameController {
     }
 
     // GET /game/:matchId/state
+
     @GetMapping("/game/{matchId}/state")
     public ResponseEntity<?> getGameState(@PathVariable String matchId) {
         try {
             User user = getCurrentUser();
-            Map<String, Object> state = gameService.getGameState(matchId, user.getId());
-            return ResponseEntity.ok(state);
+
+            return ResponseEntity.ok(gameService.getGameState(matchId, user.getId()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
     // T-022: POST /game/:matchId/describe
+
     @PostMapping("/game/{matchId}/describe")
     public ResponseEntity<?> submitDescription(
             @PathVariable String matchId,
@@ -76,6 +80,7 @@ public class GameController {
     }
 
     // T-025: POST /game/:matchId/chat
+
     @PostMapping("/game/{matchId}/chat")
     public ResponseEntity<?> submitChat(
             @PathVariable String matchId,
@@ -90,16 +95,124 @@ public class GameController {
     }
 
     // T-027: POST /game/:matchId/vote
+
     @PostMapping("/game/{matchId}/vote")
     public ResponseEntity<?> submitVote(
             @PathVariable String matchId,
             @RequestBody Map<String, String> request) {
         try {
             User user = getCurrentUser();
-            String targetUserId = request.get("target_user_id");
-            gameService.submitVote(matchId, user.getId(), targetUserId);
 
+            gameService.submitVote(matchId, user.getId(), request.get("target_user_id"));
             return ResponseEntity.ok(Map.of("voted", true));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+
+    // =========================================================
+    // SECTION 3: VÒNG ĐOÁN VAI TRÒ
+    // =========================================================
+
+    /**
+     * POST /game/:matchId/rolecheck
+     * Tất cả 6 người đều gọi endpoint này trong phase ROLE_CHECK (20s đoán).
+     * Body: { "guessed_role": "spy" } hoặc { "guessed_role": "civilian" }
+     * Response: { "submitted": true }
+     * Kết quả thực sự được gửi qua WebSocket /user/queue/role-check-result
+     */
+    @PostMapping("/game/{matchId}/rolecheck")
+    public ResponseEntity<?> submitRoleGuess(
+            @PathVariable String matchId,
+            @RequestBody Map<String, String> request) {
+        try {
+            User user = getCurrentUser();
+            Map<String, Object> result = gameService.submitRoleGuess(
+                    matchId, user.getId(), request.get("guessed_role"));
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /game/:matchId/rolecheck/confirm-ability
+     * Chỉ Spy gọi trong phase ROLE_CHECK_RESULT (20s kết quả).
+     * Body: { "use_ability": true } hoặc { "use_ability": false }
+     * Response: { "confirmed": true, "ability": "fake_message" / "infection" / "none" }
+     */
+    @PostMapping("/game/{matchId}/rolecheck/confirm-ability")
+    public ResponseEntity<?> confirmSpyAbility(
+            @PathVariable String matchId,
+            @RequestBody Map<String, Object> request) {
+        try {
+            User user = getCurrentUser();
+            boolean useAbility = Boolean.TRUE.equals(request.get("use_ability"));
+            Map<String, Object> result = gameService.confirmSpyAbility(
+                    matchId, user.getId(), useAbility);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // =========================================================
+    // SECTION 4: SPY ABILITIES
+    // =========================================================
+
+    /**
+     * POST /game/:matchId/ability/fake-message
+     * Spy dùng trong DESCRIBING hoặc DISCUSSING, mỗi vòng 1 lần.
+     * Body: { "content": "nội dung giả mạo 5-20 từ" }
+     */
+    @PostMapping("/game/{matchId}/ability/fake-message")
+    public ResponseEntity<?> useFakeMessage(
+            @PathVariable String matchId,
+            @RequestBody Map<String, String> request) {
+        try {
+            User user = getCurrentUser();
+            Map<String, Object> result = gameService.useFakeMessageAbility(
+                    matchId, user.getId(), request.get("content"));
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /game/:matchId/ability/infect
+     * Spy dùng trong ROLE_CHECK_RESULT (20s kết quả), sau khi confirm-ability = infection.
+     * Body: { "target_user_id": "userId" }
+     */
+    @PostMapping("/game/{matchId}/ability/infect")
+    public ResponseEntity<?> infectPlayer(
+            @PathVariable String matchId,
+            @RequestBody Map<String, String> request) {
+        try {
+            User user = getCurrentUser();
+            Map<String, Object> result = gameService.infectPlayer(
+                    matchId, user.getId(), request.get("target_user_id"));
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // =========================================================
+    // DEBUG ONLY
+    // =========================================================
+
+    @Profile("dev")
+    @PostMapping("/game/{matchId}/set-state")
+    public ResponseEntity<?> setGameState(
+            @PathVariable String matchId,
+            @RequestBody Map<String, String> request) {
+        try {
+            GameSession.GameState newState = GameSession.GameState.valueOf(
+                    request.get("state").toUpperCase());
+            gameService.setGameState(matchId, newState);
+            return ResponseEntity.ok(Map.of("message", "State changed to " + newState));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

@@ -7,35 +7,48 @@ import org.springframework.stereotype.Component;
 @Component
 public class GameStateMachine {
 
-    // Chuyển sang state tiếp theo
+
     public void transition(GameSession session, GameState newState) {
         GameState currentState = session.getState();
-        
+
         if (!isValidTransition(currentState, newState)) {
-            throw new RuntimeException("Invalid state transition: " + currentState + " -> " + newState);
+            throw new RuntimeException(
+                "Invalid state transition: " + currentState + " -> " + newState);
         }
 
         session.setState(newState);
         session.setUpdatedAt(java.time.LocalDateTime.now());
     }
 
-    // Kiểm tra transition hợp lệ không
+
     private boolean isValidTransition(GameState from, GameState to) {
-        return switch (from) {
-            case WAITING -> to == GameState.ROLE_ASSIGN;
-            case ROLE_ASSIGN -> to == GameState.ROLE_CHECK || to == GameState.DESCRIBING;
-            case ROLE_CHECK -> to == GameState.DESCRIBING;
-            case DESCRIBING -> to == GameState.DISCUSSING;
-            case DISCUSSING -> to == GameState.VOTING;
-            case VOTING -> to == GameState.VOTE_TIE || to == GameState.ROUND_RESULT;
-            case VOTE_TIE -> to == GameState.ROUND_RESULT;
-            case ROUND_RESULT -> to == GameState.INFECTION || to == GameState.ROLE_CHECK || to == GameState.GAME_OVER;
-            case INFECTION -> to == GameState.ROLE_CHECK || to == GameState.GAME_OVER;
-            case GAME_OVER -> false;
-        };
+        switch (from) {
+            case WAITING:
+                return to == GameState.ROLE_ASSIGN;
+            case ROLE_ASSIGN:
+                return to == GameState.DESCRIBING;
+            case DESCRIBING:
+                return to == GameState.DISCUSSING;
+            case DISCUSSING:
+                return to == GameState.VOTING;
+            case VOTING:
+                return to == GameState.VOTE_TIE || to == GameState.ROUND_RESULT;
+            case VOTE_TIE:
+                return to == GameState.ROUND_RESULT;
+            case ROUND_RESULT:
+                return to == GameState.ROLE_CHECK || to == GameState.DESCRIBING || to == GameState.GAME_OVER;
+            case ROLE_CHECK:
+                return to == GameState.ROLE_CHECK_RESULT;
+            case ROLE_CHECK_RESULT:
+                return to == GameState.DESCRIBING;
+            case GAME_OVER:
+                return false;
+            default:
+                return false;
+        }
     }
 
     public boolean isPhase(GameSession session, GameState state) {
         return session.getState() == state;
     }
-}
+

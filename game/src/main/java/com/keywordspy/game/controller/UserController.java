@@ -50,8 +50,15 @@ public class UserController {
             response.put("user_id", user.getId());
             response.put("username", user.getUsername());
             response.put("display_name", user.getDisplayName() != null ? user.getDisplayName() : "");
+            response.put("avatar_url", user.getAvatarUrl() != null ? user.getAvatarUrl() : "");
             response.put("email", user.getEmail());
             response.put("created_at", user.getCreatedAt().toString());
+
+            // --- ECONOMY INFO ---
+            response.put("balance", user.getBalance());
+            response.put("ranking_points", user.getRankingPoints());
+            // --------------------
+
             response.put("stats", statsMap);
 
             return ResponseEntity.ok(response);
@@ -67,7 +74,19 @@ public class UserController {
             User user = getCurrentUser();
 
             if (request.containsKey("display_name")) {
-                user.setDisplayName(request.get("display_name"));
+                String displayName = request.get("display_name");
+                if (displayName == null || displayName.isBlank()) {
+                    return ResponseEntity.badRequest()
+                            .body(Map.of("error", "Display name cannot be empty"));
+                }
+                user.setDisplayName(displayName);
+            }
+
+            if (request.containsKey("avatar_url")) {
+                user.setAvatarUrl(request.get("avatar_url"));
+            }
+            if (request.containsKey("avatar_url")) {
+                user.setAvatarUrl(request.get("avatar_url"));
             }
 
             userService.saveUser(user);
@@ -75,7 +94,8 @@ public class UserController {
             return ResponseEntity.ok(Map.of(
                     "user_id", user.getId(),
                     "username", user.getUsername(),
-                    "display_name", user.getDisplayName() != null ? user.getDisplayName() : ""
+                    "display_name", user.getDisplayName() != null ? user.getDisplayName() : "",
+                    "avatar_url", user.getAvatarUrl() != null ? user.getAvatarUrl() : ""
             ));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

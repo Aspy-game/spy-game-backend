@@ -8,16 +8,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
-
-<<<<<<< HEAD
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-=======
+
 import java.util.List;
 import java.util.Map;
->>>>>>> feature/game-engine
 
 @RestController
 @RequestMapping("/api/rooms")
@@ -35,7 +32,7 @@ public class RoomController {
                 .orElseThrow(() -> new RuntimeException("User not found"));
     }
 
-<<<<<<< HEAD
+
     private Map<String, Object> toRoomResponse(Room room) {
         Map<String, Object> map = new HashMap<>();
         map.put("room_id", room.getId());
@@ -50,25 +47,27 @@ public class RoomController {
     }
 
     // T-009: Tạo phòng mới
+
     @PostMapping
-    public ResponseEntity<?> createRoom(@RequestBody(required = false) Map<String, Object> request) {
+    public ResponseEntity<?> createRoom(@RequestBody(required = false) Map<String, Object> body) {
         try {
             User user = getCurrentUser();
-            boolean isPrivate = false;
-            if (request != null && request.containsKey("is_private")) {
-                isPrivate = (Boolean) request.get("is_private");
-            }
+            boolean isPrivate = body != null && Boolean.TRUE.equals(body.get("is_private"));
+            String customRoomCode = body != null ? (String) body.get("room_code") : null;
+            Room room = roomService.createRoom(user.getId(), isPrivate, customRoomCode);
 
-            Room room = roomService.createRoom(user.getId(), isPrivate);
-
-            Map<String, Object> response = toRoomResponse(room);
-            response.put("host", Map.of(
-                    "user_id", user.getId(),
-                    "display_name", user.getDisplayName() != null ? user.getDisplayName() : user.getUsername()
+            return ResponseEntity.status(201).body(Map.of(
+                    "room_id", room.getId(),
+                    "room_code", room.getRoomCode(),
+                    "host", Map.of(
+                            "user_id", user.getId(),
+                            "display_name", user.getDisplayName() != null ? user.getDisplayName() : user.getUsername()
+                    ),
+                    "status", room.getStatus().toString(),
+                    "current_players", room.getCurrentPlayers()
             ));
 
-            return ResponseEntity.status(HttpStatus.CREATED).body(response);
-=======
+
     // POST /api/rooms — Tạo phòng mới
     @PostMapping
     public ResponseEntity<?> createRoom(@RequestBody(required = false) Map<String, Object> body) {
@@ -87,28 +86,27 @@ public class RoomController {
                     "status", room.getStatus().toString(),
                     "current_players", room.getCurrentPlayers()
             ));
->>>>>>> feature/game-engine
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
-<<<<<<< HEAD
+
     // T-013: Danh sách phòng đang chờ
+
     @GetMapping
-    public ResponseEntity<?> getRooms(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
+    public ResponseEntity<?> getRooms() {
         try {
             List<Room> rooms = roomService.getWaitingRooms(page, size);
             List<Map<String, Object>> roomList = rooms.stream()
                     .map(this::toRoomResponse)
                     .collect(Collectors.toList());
-=======
+
     // GET /api/rooms — Danh sách phòng công khai
     @GetMapping
     public ResponseEntity<?> getRooms() {
         try {
+
             List<Room> rooms = roomService.getPublicRooms();
             List<Map<String, Object>> roomList = rooms.stream().map(r -> Map.<String, Object>of(
                     "room_id", r.getId(),
@@ -117,7 +115,8 @@ public class RoomController {
                     "max_players", r.getMaxPlayers(),
                     "status", r.getStatus().toString()
             )).toList();
->>>>>>> feature/game-engine
+
+
 
             return ResponseEntity.ok(Map.of(
                     "rooms", roomList,
@@ -128,19 +127,15 @@ public class RoomController {
         }
     }
 
-<<<<<<< HEAD
+
     // T-012: Tham gia phòng bằng room code
-=======
-    // POST /api/rooms/:roomCode/join — Tham gia phòng
->>>>>>> feature/game-engine
+
     @PostMapping("/{roomCode}/join")
     public ResponseEntity<?> joinRoom(@PathVariable String roomCode) {
         try {
             User user = getCurrentUser();
             Room room = roomService.joinRoom(roomCode, user.getId());
-<<<<<<< HEAD
             return ResponseEntity.ok(toRoomResponse(room));
-=======
             List<RoomPlayer> players = roomService.getPlayersInRoom(room.getId());
 
             return ResponseEntity.ok(Map.of(
@@ -152,37 +147,26 @@ public class RoomController {
                             "display_name", p.getDisplayName()
                     )).toList()
             ));
->>>>>>> feature/game-engine
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
-<<<<<<< HEAD
-    // Rời phòng
-    @PostMapping("/{roomCode}/leave")
-    public ResponseEntity<?> leaveRoom(@PathVariable String roomCode) {
-        try {
-            User user = getCurrentUser();
-            Room room = roomService.leaveRoom(roomCode, user.getId());
-            if (room == null) {
-                return ResponseEntity.ok(Map.of("message", "Room deleted (no players left)"));
-            }
-=======
+
     // POST /api/rooms/:roomId/leave — Rời phòng
     @PostMapping("/{roomId}/leave")
     public ResponseEntity<?> leaveRoom(@PathVariable String roomId) {
         try {
             User user = getCurrentUser();
             roomService.leaveRoom(roomId, user.getId());
->>>>>>> feature/game-engine
+
             return ResponseEntity.ok(Map.of("message", "Left room"));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
-<<<<<<< HEAD
+
     // Xem chi tiết phòng
     @GetMapping("/{roomCode}")
     public ResponseEntity<?> getRoom(@PathVariable String roomCode) {
@@ -190,7 +174,7 @@ public class RoomController {
             Room room = roomService.findByRoomCode(roomCode)
                     .orElseThrow(() -> new RuntimeException("Room not found"));
             return ResponseEntity.ok(toRoomResponse(room));
-=======
+
     // GET /api/rooms/:roomId/players — Danh sách players trong phòng
     @GetMapping("/{roomId}/players")
     public ResponseEntity<?> getPlayers(@PathVariable String roomId) {
@@ -203,9 +187,50 @@ public class RoomController {
                             "display_name", p.getDisplayName()
                     )).toList()
             ));
->>>>>>> feature/game-engine
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // GET /api/rooms/:roomId — Lấy thông tin chi tiết phòng
+    @GetMapping("/{roomId}")
+    public ResponseEntity<?> getRoomDetail(@PathVariable String roomId) {
+        try {
+            Room room = roomService.getRoomById(roomId);
+            List<RoomPlayer> players = roomService.getPlayersInRoom(roomId);
+            return ResponseEntity.ok(Map.of(
+                    "room_id", room.getId(),
+                    "room_code", room.getRoomCode(),
+                    "host_id", room.getHostId(),
+                    "current_players", room.getCurrentPlayers(),
+                    "max_players", room.getMaxPlayers(),
+                    "status", room.getStatus().toString(),
+                    "is_private", room.isPrivate(),
+                    "players", players.stream().map(p -> Map.<String, Object>of(
+                            "user_id", p.getUserId(),
+                            "display_name", p.getDisplayName()
+                    )).toList()
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // GET /api/rooms/code/:roomCode — Tìm phòng bằng mã (dành cho tham gia bằng mã)
+    @GetMapping("/code/{roomCode}")
+    public ResponseEntity<?> getRoomByCode(@PathVariable String roomCode) {
+        try {
+            Room room = roomService.getRoomByCode(roomCode);
+            return ResponseEntity.ok(Map.of(
+                    "room_id", room.getId(),
+                    "room_code", room.getRoomCode(),
+                    "current_players", room.getCurrentPlayers(),
+                    "max_players", room.getMaxPlayers(),
+                    "status", room.getStatus().toString(),
+                    "is_private", room.isPrivate()
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
         }
     }
 }

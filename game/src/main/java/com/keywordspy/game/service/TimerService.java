@@ -5,6 +5,7 @@ import com.keywordspy.game.model.GameSession.GameState;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
+
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.stereotype.Service;
 
@@ -20,11 +21,16 @@ import java.util.concurrent.TimeUnit;
 @EnableAsync
 public class TimerService {
 
-    // Thời gian mỗi phase (giây)
-public static final int DESCRIBE_DURATION = 10;
-public static final int DISCUSS_DURATION = 10;
-public static final int VOTE_DURATION = 300;  // VOTING giữ 300s để kịp vote
-public static final int ROLE_CHECK_DURATION = 10; // nếu có
+
+    // =========================================================
+    // THỜI GIAN MỖI PHASE (giây)
+    // Đang để 300s (5 phút) để tiện test — chỉnh lại khi release
+    // =========================================================
+    public static final int DESCRIBE_DURATION          = 300; // thực tế: 60s
+    public static final int DISCUSS_DURATION           = 300; // thực tế: 90s
+    public static final int VOTE_DURATION              = 300; // thực tế: 30s
+    public static final int ROLE_CHECK_DURATION        = 300; // thực tế: 20s (phase đoán)
+    public static final int ROLE_CHECK_RESULT_DURATION = 300; // thực tế: 20s (phase kết quả + Spy chọn Tha Hóa)
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
     private final Map<String, ScheduledFuture<?>> activeTimers = new ConcurrentHashMap<>();
@@ -33,34 +39,42 @@ public static final int ROLE_CHECK_DURATION = 10; // nếu có
     @Lazy
     private GameService gameService;
 
-    // Bắt đầu timer cho phase mô tả
+
+    // =========================================================
+    // START TIMERS
+    // =========================================================
+
     public void startDescribeTimer(String matchId) {
-        startTimer(matchId, DESCRIBE_DURATION, () -> {
-            gameService.onDescribePhaseEnd(matchId);
-        });
+        startTimer(matchId, DESCRIBE_DURATION, () ->
+                gameService.onDescribePhaseEnd(matchId));
     }
-    
 
-    // Bắt đầu timer cho phase thảo luận
     public void startDiscussTimer(String matchId) {
-        startTimer(matchId, DISCUSS_DURATION, () -> {
-            gameService.onDiscussPhaseEnd(matchId);
-        });
+        startTimer(matchId, DISCUSS_DURATION, () ->
+                gameService.onDiscussPhaseEnd(matchId));
     }
 
-    // Bắt đầu timer cho phase vote
     public void startVoteTimer(String matchId) {
-        startTimer(matchId, VOTE_DURATION, () -> {
-            gameService.onVotePhaseEnd(matchId);
-        });
+        startTimer(matchId, VOTE_DURATION, () ->
+                gameService.onVotePhaseEnd(matchId));
     }
-    public void startRoleCheckTimer(String matchId) {
-    startTimer(matchId, ROLE_CHECK_DURATION, () -> {
-        gameService.onRoleCheckPhaseEnd(matchId);
-    });
-}
 
-    // Hủy timer của match
+    // Phase ROLE_CHECK: 20s tất cả đoán vai trò
+    public void startRoleCheckTimer(String matchId) {
+        startTimer(matchId, ROLE_CHECK_DURATION, () ->
+                gameService.onRoleCheckPhaseEnd(matchId));
+    }
+
+    // Phase ROLE_CHECK_RESULT: 20s hiện kết quả cá nhân + Spy chọn Tha Hóa
+    public void startRoleCheckResultTimer(String matchId) {
+        startTimer(matchId, ROLE_CHECK_RESULT_DURATION, () ->
+                gameService.onRoleCheckResultPhaseEnd(matchId));
+    }
+
+    // =========================================================
+    // CANCEL & UTILS
+    // =========================================================
+
     public void cancelTimer(String matchId) {
         ScheduledFuture<?> future = activeTimers.remove(matchId);
         if (future != null) {
@@ -68,7 +82,7 @@ public static final int ROLE_CHECK_DURATION = 10; // nếu có
         }
     }
 
-    // Tính số giây còn lại
+
     public int getRemainingSeconds(GameSession session) {
         if (session.getPhaseEndTime() == null) return 0;
         long remaining = java.time.Duration.between(
@@ -79,6 +93,7 @@ public static final int ROLE_CHECK_DURATION = 10; // nếu có
     private void startTimer(String matchId, int durationSeconds, Runnable onComplete) {
         // Hủy timer cũ nếu có
         cancelTimer(matchId);
+
 
         ScheduledFuture<?> future = scheduler.schedule(() -> {
             activeTimers.remove(matchId);

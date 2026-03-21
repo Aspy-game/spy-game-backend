@@ -10,20 +10,30 @@ import java.util.Map;
 @Data
 public class GameSession {
 
+
+    // =========================================================
     // IDs
+    // =========================================================
     private String matchId;
     private String roomId;
 
-    // State
+    // =========================================================
+    // GAME STATE
+    // =========================================================
     private GameState state = GameState.WAITING;
     private int currentRound = 0;
 
-    // Keyword
+    // =========================================================
+    // KEYWORDS
+    // =========================================================
     private String civilianKeyword;
     private String spyKeyword;
     private String keywordPairId;
 
-    // Players
+
+    // =========================================================
+    // PLAYERS
+    // =========================================================
     private List<Player> players = new ArrayList<>();
     private String spyUserId;
     private String aiPlayerId;
@@ -69,6 +79,7 @@ public class GameSession {
     }
 
     // Helper: lấy player theo userId
+
     public Player getPlayer(String userId) {
         return players.stream()
                 .filter(p -> p.getUserId().equals(userId))
@@ -76,20 +87,30 @@ public class GameSession {
                 .orElse(null);
     }
 
-    // Helper: lấy danh sách player còn sống
+
     public List<Player> getAlivePlayers() {
         return players.stream()
                 .filter(Player::isAlive)
                 .toList();
     }
 
-    // Helper: lấy descriptions của round hiện tại
     public Map<String, String> getCurrentRoundDescriptions() {
         return descriptions.getOrDefault(currentRound, new HashMap<>());
     }
 
-    // Helper: lấy votes của round hiện tại
+
     public Map<String, String> getCurrentRoundVotes() {
         return votes.getOrDefault(currentRound, new HashMap<>());
+    }
+
+    // Người chơi đã gửi kết quả đoán vai chưa
+    public boolean hasSubmittedRoleGuess(String userId) {
+        return roleCheckResults.containsKey(userId);
+    }
+
+    // Tất cả người còn sống đã đoán xong chưa
+    public boolean allPlayersGuessed() {
+        return getAlivePlayers().stream()
+                .allMatch(p -> roleCheckResults.containsKey(p.getUserId()));
     }
 }
