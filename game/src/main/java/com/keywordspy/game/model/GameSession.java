@@ -10,6 +10,7 @@ import java.util.Map;
 @Data
 public class GameSession {
 
+
     // =========================================================
     // IDs
     // =========================================================
@@ -29,6 +30,7 @@ public class GameSession {
     private String spyKeyword;
     private String keywordPairId;
 
+
     // =========================================================
     // PLAYERS
     // =========================================================
@@ -37,89 +39,46 @@ public class GameSession {
     private String aiPlayerId;
     private String infectedUserId;
 
-    // =========================================================
-    // PHASE TIMING
-    // =========================================================
+    // Phase timing
     private LocalDateTime phaseStartTime;
     private LocalDateTime phaseEndTime;
 
-    // =========================================================
-    // ROUND DATA
-    // =========================================================
-    // Mô tả thật: roundNumber → (userId → nội dung)
+    // Descriptions per round: roundNumber -> (userId -> description)
     private Map<Integer, Map<String, String>> descriptions = new HashMap<>();
 
-    // Tin nhắn giả mạo AI của Spy: roundNumber → nội dung (1 tin/round)
+    // Fake descriptions by Spy: roundNumber -> content
     private Map<Integer, String> fakeDescriptions = new HashMap<>();
 
-    // Vote: roundNumber → (voterId → targetId)
+    // Votes per round: roundNumber -> (voterId -> targetId)
     private Map<Integer, Map<String, String>> votes = new HashMap<>();
 
-    // =========================================================
-    // VÒNG ĐOÁN VAI TRÒ
-    // Diễn ra 1 lần duy nhất sau Vòng 1
-    // =========================================================
+    // Spy ability
+    private boolean roleCheckCorrect = false;
+    private boolean abilityUsed = false;
+    private SpyAbility abilityType = SpyAbility.none;
 
-    // Đã qua Vòng Đoán Vai chưa — ngăn lặp lại từ vòng 2 trở đi
-    private boolean roleCheckDone = false;
-
-    // Kết quả đoán của từng người: userId → true/false (đoán đúng hay sai)
-    // Dùng để tính xu thưởng civilian và mở khóa ability cho Spy
-    private Map<String, Boolean> roleCheckResults = new HashMap<>();
-
-    // =========================================================
-    // SPY ABILITY
-    // =========================================================
-
-    // Spy có biết mình là Spy không
-    // true  = đoán đúng ở Vòng Đoán Vai (dù dùng hay không dùng khả năng)
-    // false = đoán sai → Spy không biết mình là Spy cả ván
-    private boolean spyKnowsRole = false;
-
-    // Ability được mở: SpyAbility.fake_message, SpyAbility.infection, hoặc null
-    private SpyAbility abilityType = null;
-
-    // Spy chủ động từ chối dùng khả năng → biết mình là Spy nhưng không có khả năng
-    private boolean spyAbilityDeclined = false;
-
-    // Fake message đã dùng vòng này chưa — reset về false đầu mỗi vòng mới
-    // Spy được dùng mỗi vòng 1 lần, miễn AI còn sống
-    private boolean fakeMessageUsedThisRound = false;
-
-    // Spy đã Tha hóa ai chưa — chỉ được 1 lần cả ván
-    private boolean infectUsed = false;
-
-    // =========================================================
-    // ROUND RESULT
-    // =========================================================
+    // Round result
     private String eliminatedUserId;
     private WinnerRole winnerRole;
 
-    // =========================================================
-    // TIMESTAMPS
-    // =========================================================
+    // Timestamps
     private LocalDateTime createdAt = LocalDateTime.now();
     private LocalDateTime updatedAt = LocalDateTime.now();
 
-    // =========================================================
-    // GAME STATES
-    // =========================================================
     public enum GameState {
-        WAITING,            // Phòng chờ
-        ROLE_ASSIGN,        // Server assign vai + keyword
-        DESCRIBING,         // Phase mô tả keyword (60s)
-        DISCUSSING,         // Phase thảo luận (90s)
-        VOTING,             // Phase bỏ phiếu (30s)
-        VOTE_TIE,           // Hòa → Sudden Death
-        ROUND_RESULT,       // Hiển thị kết quả round
-        ROLE_CHECK,         // Vòng Đoán Vai — 20s tất cả đoán (sau Vòng 1)
-        ROLE_CHECK_RESULT,  // 20s hiện kết quả riêng tư + Spy chọn Tha Hóa nếu có
-        GAME_OVER           // Game kết thúc
+        WAITING,
+        ROLE_ASSIGN,
+        ROLE_CHECK,
+        DESCRIBING,
+        DISCUSSING,
+        VOTING,
+        VOTE_TIE,
+        ROUND_RESULT,
+        INFECTION,
+        GAME_OVER
     }
 
-    // =========================================================
-    // HELPER METHODS
-    // =========================================================
+    // Helper: lấy player theo userId
 
     public Player getPlayer(String userId) {
         return players.stream()
@@ -127,6 +86,7 @@ public class GameSession {
                 .findFirst()
                 .orElse(null);
     }
+
 
     public List<Player> getAlivePlayers() {
         return players.stream()
@@ -137,6 +97,7 @@ public class GameSession {
     public Map<String, String> getCurrentRoundDescriptions() {
         return descriptions.getOrDefault(currentRound, new HashMap<>());
     }
+
 
     public Map<String, String> getCurrentRoundVotes() {
         return votes.getOrDefault(currentRound, new HashMap<>());
