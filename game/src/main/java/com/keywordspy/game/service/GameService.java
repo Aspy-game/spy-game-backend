@@ -1,5 +1,7 @@
 package com.keywordspy.game.service;
 
+import com.keywordspy.game.ai.AIService;
+
 import com.keywordspy.game.manager.GameStateMachine;
 import com.keywordspy.game.manager.VoteManager;
 import com.keywordspy.game.model.*;
@@ -20,41 +22,57 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class GameService {
 
-    // TODO T-056: Thay ConcurrentHashMap bằng RedisTemplate khi làm Sprint 6
+    // Lưu game session trong memory (thay cho Redis)
     private final Map<String, GameSession> gameSessions = new ConcurrentHashMap<>();
 
-    @Autowired private GameStateMachine stateMachine;
-    @Autowired private VoteManager voteManager;
-    @Autowired private TimerService timerService;
-    @Autowired private KeywordService keywordService;
-    @Autowired private RoomPlayerRepository roomPlayerRepository;
-    @Autowired private RoomRepository roomRepository;
-    @Autowired private MatchRepository matchRepository;
-    @Autowired private UserRepository userRepository;
-    @Autowired private SimpMessagingTemplate messagingTemplate;
-    @Autowired private EconomyService economyService;
+    @Autowired
+    private GameStateMachine stateMachine;
 
-    // =========================================================
-    // SECTION 1: GAME SETUP
-    // =========================================================
+    @Autowired
+    private VoteManager voteManager;
+
+    @Autowired
+    private TimerService timerService;
+
+    @Autowired
+    private KeywordService keywordService;
+
+    @Autowired
+    private RoomPlayerRepository roomPlayerRepository;
+
+    @Autowired
+    private RoomRepository roomRepository;
+
+    @Autowired
+    private MatchRepository matchRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
+
+    @Autowired
+    private AIService aiService; // T-042: Inject AIService
+
+    // T-018: Bắt đầu game
 
     public GameSession startGame(String roomId, String hostUserId) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new RuntimeException("Room not found"));
 
-        if (!room.getHostId().equals(hostUserId))
+        if (!room.getHostId().equals(hostUserId)) {
             throw new RuntimeException("Only host can start the game");
-        if (room.getCurrentPlayers() < 2)
-            throw new RuntimeException("Need at least 2 players to start");
-
-        // --- ECONOMY SYSTEM: Thu phí vào cửa ---
-        List<RoomPlayer> roomPlayers = roomPlayerRepository.findByRoomId(room.getId());
-        for (RoomPlayer rp : roomPlayers) {
-            economyService.deductEntryFee(rp.getUserId(), 100);
         }
-        // ---------------------------------------
 
+        if (room.getCurrentPlayers() < 2) {
+            throw new RuntimeException("Need at least 2 players to start");
+        }
+
+        // Chọn keyword pair
         KeywordPair keyword = keywordService.getRandomKeyword();
+
+        // Tạo Match trong DB
 
         Match match = new Match();
         match.setRoomId(roomId);
@@ -62,6 +80,8 @@ public class GameService {
         match.setSpyKeyword(keyword.getSpyKeyword());
         match.setStatus(MatchStatus.in_progress);
         Match savedMatch = matchRepository.save(match);
+
+        // Tạo GameSession
 
         GameSession session = new GameSession();
         session.setMatchId(savedMatch.getId());
@@ -71,23 +91,43 @@ public class GameService {
         session.setKeywordPairId(keyword.getId());
         session.setCurrentRound(1);
 
+        // Assign players từ room
         List<Player> players = createPlayers(room, savedMatch.getId());
         session.setPlayers(players);
 
-        List<Player> humanPlayers = players.stream().filter(p -> !p.isAi()).toList();
+        // Assign Spy ngẫu nhiên (không phải AI)
+        List<Player> humanPlayers = players.stream()
+                .filter(p -> !p.isAi())
+                .toList();
+
         Player spy = humanPlayers.get(new Random().nextInt(humanPlayers.size()));
         spy.setRole(PlayerRole.spy);
         session.setSpyUserId(spy.getUserId());
         savedMatch.setSpyUserId(spy.getUserId());
         matchRepository.save(savedMatch);
 
+        // Lưu session
         gameSessions.put(savedMatch.getId(), session);
 
+        // Chuyển state sang ROLE_ASSIGN
         stateMachine.transition(session, GameState.ROLE_ASSIGN);
+
+        // Broadcast role cho từng player
         broadcastRoles(session);
 
-        // Vòng 1 bắt đầu thẳng vào DESCRIBING
-        moveToDescribing(session);
+        // Chuyển sang DESCRIBING và bắt đầu timer
+        stateMachine.transition(session, GameState.DESCRIBING);
+        session.setPhaseStartTime(LocalDateTime.now());
+        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DESCRIBE_DURATION));
+        timerService.startDescribeTimer(savedMatch.getId());
+
+        // Broadcast phase mới
+        broadcastPhase(session);
+
+        // T-045: Trigger AI mô tả ngay khi game bắt đầu
+        triggerAIActions(session, GameState.DESCRIBING);
+
+        // Update room status
 
         room.setStatus(RoomStatus.in_game);
         roomRepository.save(room);
@@ -95,12 +135,17 @@ public class GameService {
         return session;
     }
 
+    // Tạo danh sách players từ room
+
     private List<Player> createPlayers(Room room, String matchId) {
         List<Player> players = new ArrayList<>();
         List<PlayerColor> colors = new ArrayList<>(Arrays.asList(PlayerColor.values()));
         Collections.shuffle(colors);
 
+        // Lấy tất cả players đã join phòng từ room_players
         List<RoomPlayer> roomPlayers = roomPlayerRepository.findByRoomId(room.getId());
+
+
         for (RoomPlayer rp : roomPlayers) {
             Player player = new Player();
             player.setUserId(rp.getUserId());
@@ -112,6 +157,8 @@ public class GameService {
             player.setAi(false);
             players.add(player);
         }
+
+        // Nếu chưa đủ 6 → thêm AI Civilian
 
         while (players.size() < 6) {
             Player aiPlayer = new Player();
@@ -128,26 +175,35 @@ public class GameService {
         return players;
     }
 
-    // =========================================================
-    // SECTION 2: PHASE ACTIONS (Describe / Chat / Vote)
-    // =========================================================
-
+    // T-022: Gửi mô tả keyword
     public void submitDescription(String matchId, String userId, String content) {
         GameSession session = getSession(matchId);
-        if (session.getState() != GameState.DESCRIBING)
+
+        if (session.getState() != GameState.DESCRIBING) {
             throw new RuntimeException("Not in describing phase");
+        }
 
-        Player player = getAlivePlayer(session, userId);
+        Player player = session.getPlayer(userId);
+        if (player == null || !player.isAlive()) {
+            throw new RuntimeException("Player not found or eliminated");
+        }
 
+        // Validate nội dung
         String[] words = content.trim().split("\\s+");
-        if (words.length < 5 || words.length > 20)
+        if (words.length < 5 || words.length > 20) {
             throw new RuntimeException("Description must be 5-20 words");
+        }
+
+        // Lưu description
 
         session.getDescriptions()
                 .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>())
                 .put(userId, content);
 
+        // Broadcast descriptions
         broadcastDescriptions(session);
+
+        // Nếu tất cả đã mô tả → chuyển sang DISCUSSING
 
         if (allPlayersDescribed(session)) {
             timerService.cancelTimer(matchId);
@@ -155,12 +211,20 @@ public class GameService {
         }
     }
 
+    // T-025: Gửi chat thảo luận
     public void submitChat(String matchId, String userId, String content) {
         GameSession session = getSession(matchId);
-        if (session.getState() != GameState.DISCUSSING)
-            throw new RuntimeException("Not in discussing phase");
 
-        Player player = getAlivePlayer(session, userId);
+        if (session.getState() != GameState.DISCUSSING) {
+            throw new RuntimeException("Not in discussing phase");
+        }
+
+        Player player = session.getPlayer(userId);
+        if (player == null || !player.isAlive()) {
+            throw new RuntimeException("Player not found or eliminated");
+        }
+
+        // Broadcast chat
 
         Map<String, Object> chatMsg = new HashMap<>();
         chatMsg.put("user_id", userId);
@@ -168,34 +232,51 @@ public class GameService {
         chatMsg.put("color", player.getColor().toString());
         chatMsg.put("content", content);
         chatMsg.put("sent_at", LocalDateTime.now().toString());
+
         messagingTemplate.convertAndSend("/topic/game/" + matchId + "/chat", (Object) chatMsg);
     }
 
+    // T-027: Bỏ phiếu
     public void submitVote(String matchId, String voterId, String targetId) {
         GameSession session = getSession(matchId);
-        if (session.getState() != GameState.VOTING)
-            throw new RuntimeException("Not in voting phase");
 
-        Player voter = getAlivePlayer(session, voterId);
+        if (session.getState() != GameState.VOTING) {
+            throw new RuntimeException("Not in voting phase");
+        }
+
+        Player voter = session.getPlayer(voterId);
         Player target = session.getPlayer(targetId);
-        if (target == null || !target.isAlive())
+
+        if (voter == null || !voter.isAlive()) {
+            throw new RuntimeException("Voter not found or eliminated");
+        }
+        if (target == null || !target.isAlive()) {
             throw new RuntimeException("Target not found or eliminated");
-        if (voterId.equals(targetId))
+        }
+        if (voterId.equals(targetId)) {
             throw new RuntimeException("Cannot vote for yourself");
+        }
 
         Map<String, String> currentVotes = session.getVotes()
                 .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
-        if (currentVotes.containsKey(voterId))
+
+        if (currentVotes.containsKey(voterId)) {
             throw new RuntimeException("Already voted");
+        }
 
         currentVotes.put(voterId, targetId);
+
+        // Broadcast vote count
         broadcastVoteCounts(session);
+
+        // Nếu tất cả đã vote → xử lý kết quả
 
         if (voteManager.allVoted(session)) {
             timerService.cancelTimer(matchId);
             processVoteResult(session);
         }
     }
+
 
     // =========================================================
     // SECTION 3: VÒNG ĐOÁN VAI TRÒ
@@ -447,6 +528,7 @@ public class GameService {
         }
     }
 
+
     private void eliminatePlayer(GameSession session, String userId) {
         Player player = session.getPlayer(userId);
         if (player != null) {
@@ -454,13 +536,19 @@ public class GameService {
             player.setEliminatedRound(session.getCurrentRound());
             session.setEliminatedUserId(userId);
         }
+
         stateMachine.transition(session, GameState.ROUND_RESULT);
         broadcastRoundResult(session);
+
+        // Kiểm tra win condition
         checkWinCondition(session);
     }
 
+    // Kiểm tra điều kiện thắng
     private void checkWinCondition(GameSession session) {
         Player spy = session.getPlayer(session.getSpyUserId());
+        List<Player> alivePlayers = session.getAlivePlayers();
+
 
         // Spy bị loại → Civilians thắng
         if (spy != null && !spy.isAlive()) {
@@ -470,16 +558,16 @@ public class GameService {
             return;
         }
 
-        // Civilians (không kể Spy) còn 1 → Spy thắng
-        long aliveNonSpy = session.getAlivePlayers().stream()
-                .filter(p -> !p.getUserId().equals(session.getSpyUserId()))
-                .count();
-        if (aliveNonSpy <= 1) {
+        // Chỉ còn 1 civilian và spy → Spy thắng
+        long aliveHumans = alivePlayers.stream().filter(p -> !p.isAi()).count();
+        if (aliveHumans <= 1) {
+
             session.setWinnerRole(WinnerRole.spy);
             stateMachine.transition(session, GameState.GAME_OVER);
             broadcastGameOver(session);
             return;
         }
+
 
         startNextRound(session);
     }
@@ -538,6 +626,9 @@ public class GameService {
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DISCUSS_DURATION));
         timerService.startDiscussTimer(session.getMatchId());
         broadcastPhase(session);
+        // T-045: AI tham gia thảo luận
+        triggerAIActions(session, GameState.DISCUSSING);
+
     }
 
     private void moveToVoting(GameSession session) {
@@ -546,6 +637,7 @@ public class GameService {
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.VOTE_DURATION));
         timerService.startVoteTimer(session.getMatchId());
         broadcastPhase(session);
+
     }
 
     // =========================================================
@@ -667,21 +759,31 @@ public class GameService {
             roleMsg.put("round", session.getCurrentRound());
             roleMsg.put("role", player.getRole().toString());
             roleMsg.put("color", player.getColor().toString());
-            // Tất cả nhận keyword nhưng chưa biết mình là vai gì
-            roleMsg.put("your_keyword", player.getRole() == PlayerRole.spy
-                    ? session.getSpyKeyword()
-                    : session.getCivilianKeyword());
-            messagingTemplate.convertAndSendToUser(player.getUserId(), "/queue/role", roleMsg);
+            if (player.getRole() == PlayerRole.spy) {
+                roleMsg.put("your_keyword", session.getSpyKeyword());
+            } else {
+                roleMsg.put("your_keyword", session.getCivilianKeyword());
+            }
+
+            messagingTemplate.convertAndSendToUser(
+                    player.getUserId(),
+                    "/queue/role",
+                    roleMsg
+            );
         }
     }
+
+    // Broadcast phase hiện tại
 
     private void broadcastPhase(GameSession session) {
         Map<String, Object> phaseMsg = new HashMap<>();
         phaseMsg.put("match_id", session.getMatchId());
         phaseMsg.put("phase", session.getState().toString());
         phaseMsg.put("round", session.getCurrentRound());
-        if (session.getPhaseEndTime() != null)
+        if (session.getPhaseEndTime() != null) {
             phaseMsg.put("phase_end_at", session.getPhaseEndTime().toString());
+        }
+
         phaseMsg.put("players", session.getAlivePlayers().stream().map(p -> {
             Map<String, Object> pm = new HashMap<>();
             pm.put("user_id", p.getUserId());
@@ -705,6 +807,7 @@ public class GameService {
                 (Object) voteManager.getVoteCounts(session));
     }
 
+
     private void broadcastRoundResult(GameSession session) {
         Player eliminated = session.getPlayer(session.getEliminatedUserId());
         Map<String, Object> result = new HashMap<>();
@@ -715,9 +818,14 @@ public class GameService {
             result.put("eliminated_display_name", eliminated.getDisplayName());
             result.put("eliminated_role", eliminated.getRole().toString());
         }
+
         messagingTemplate.convertAndSend(
-                "/topic/game/" + session.getMatchId() + "/round-result", (Object) result);
+                "/topic/game/" + session.getMatchId() + "/round-result",
+                (Object) result
+        );
     }
+
+    // Broadcast game over
 
     private void broadcastGameOver(GameSession session) {
         Map<String, Object> gameOver = new HashMap<>();
@@ -726,6 +834,7 @@ public class GameService {
         gameOver.put("spy_user_id", session.getSpyUserId());
         gameOver.put("civilian_keyword", session.getCivilianKeyword());
         gameOver.put("spy_keyword", session.getSpyKeyword());
+
 
         // --- ECONOMY SYSTEM: Phát thưởng ---
         processEndGameRewards(session);
