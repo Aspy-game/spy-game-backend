@@ -56,7 +56,7 @@ public class UserService implements UserDetailsService {
         );
     }
 
-    public User registerUser(String username, String email, String password, String displayName) {
+    public User registerUser(String username, String email, String password, String displayName, Role role) {
         if (userRepository.findByUsername(username).isPresent()) {
             throw new RuntimeException("Username already exists");
         }
@@ -69,7 +69,7 @@ public class UserService implements UserDetailsService {
         user.setEmail(email);
         user.setDisplayName(displayName);
         user.setPasswordHash(passwordEncoder.encode(password));
-        user.setRole(Role.ROLE_USER);
+        user.setRole(role != null ? role : Role.ROLE_USER);
         User savedUser = userRepository.save(user);             
         
         UserStats stats = new UserStats();

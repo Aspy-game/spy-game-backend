@@ -43,14 +43,12 @@ public class RoomService {
         }
         room.setHostId(hostUserId);
         room.setPrivate(isPrivate);
-        room.setCurrentPlayers(1);
+        room.setCurrentPlayers(0); // Sẽ được tăng lên trong addPlayerToRoom
         room.setStatus(RoomStatus.waiting);
         Room savedRoom = roomRepository.save(room);
 
-        // Thêm host vào room_players
-        addPlayerToRoom(savedRoom.getId(), host);
-
-        return savedRoom;
+        // Thêm host vào room_players và cập nhật currentPlayers
+        return joinRoom(savedRoom.getRoomCode(), hostUserId);
     }
 
     // Join phòng bằng roomCode
@@ -124,6 +122,11 @@ public class RoomService {
     public Room getRoomById(String roomId) {
         return roomRepository.findById(roomId)
                 .orElseThrow(() -> new RuntimeException("Room not found"));
+    }
+
+    public Room getRoomByCode(String roomCode) {
+        return roomRepository.findByRoomCode(roomCode)
+                .orElseThrow(() -> new RuntimeException("Room not found with code: " + roomCode));
     }
 
     // Helper: thêm player vào collection room_players

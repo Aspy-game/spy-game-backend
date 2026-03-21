@@ -40,7 +40,8 @@ public class AuthController {
                     request.getUsername(),
                     request.getEmail(),
                     request.getPassword(),
-                    request.getDisplayName()
+                    request.getDisplayName(),
+                    request.getRole()
             );
             
             UserDetails userDetails = userService.loadUserByUsername(user.getUsername());
@@ -102,9 +103,13 @@ public class AuthController {
             if (username != null) {
                 UserDetails userDetails = userService.loadUserByUsername(username);
                 if (jwtService.isTokenValid(refreshToken, userDetails)) {
+                    User user = userService.findByUsernameOrEmail(username)
+                            .orElseThrow(() -> new RuntimeException("User not found"));
+                    
                     String accessToken = jwtService.generateAccessToken(userDetails);
                     AuthResponse response = AuthResponse.builder()
                             .accessToken(accessToken)
+                            .role(user.getRole())
                             .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
                             .build();
                     return ResponseEntity.ok(response);
