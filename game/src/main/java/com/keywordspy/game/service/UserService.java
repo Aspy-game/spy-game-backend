@@ -13,6 +13,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -51,6 +53,7 @@ public class UserService implements UserDetailsService {
                 true,
                 true,
                 true,
+
                 Collections.singletonList(new SimpleGrantedAuthority(user.getRole().name()))
         );
     }
@@ -62,6 +65,7 @@ public class UserService implements UserDetailsService {
         if (username == null || username.isBlank()) {
             throw new RuntimeException("Username is required");
         }
+
         if (userRepository.findByUsername(username).isPresent()) {
             throw new RuntimeException("Username already exists");
         }
@@ -70,12 +74,13 @@ public class UserService implements UserDetailsService {
         }
 
         User user = new User();
-        user.setUsername(username);
+        user.setUsername(username != null ? username : email.split("@")[0]);
         user.setEmail(email);
         user.setDisplayName(displayName);
         user.setPasswordHash(passwordEncoder.encode(password));
         user.setRole(Role.ROLE_USER);
         User savedUser = userRepository.save(user);
+
 
         UserStats stats = new UserStats();
         stats.setUserId(savedUser.getId());
@@ -116,4 +121,3 @@ public class UserService implements UserDetailsService {
         user.setRole(role);
         return userRepository.save(user);
     }
-}

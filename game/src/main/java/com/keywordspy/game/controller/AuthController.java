@@ -41,7 +41,8 @@ public class AuthController {
                     request.getUsername(),
                     request.getEmail(),
                     request.getPassword(),
-                    request.getDisplayName()
+                    request.getDisplayName(),
+                    request.getRole()
             );
 
             UserDetails userDetails = userService.loadUserByUsername(user.getUsername());
@@ -52,9 +53,11 @@ public class AuthController {
                     .userId(user.getId())
                     .username(user.getUsername())
                     .displayName(user.getDisplayName())
+                    .avatarUrl(user.getAvatarUrl())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
+
                     .build();
 
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
@@ -70,7 +73,7 @@ public class AuthController {
                     new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword())
             );
 
-            User user = userService.findByUsername(request.getUsername())
+            User user = userService.findByUsernameOrEmail(request.getUsername())
                     .orElseThrow(() -> new RuntimeException("User not found after authentication"));
 
             UserDetails userDetails = userService.loadUserByUsername(request.getUsername());
@@ -79,7 +82,9 @@ public class AuthController {
 
             AuthResponse response = AuthResponse.builder()
                     .userId(user.getId())
+                    .username(user.getUsername())
                     .displayName(user.getDisplayName())
+                    .avatarUrl(user.getAvatarUrl())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
@@ -100,9 +105,13 @@ public class AuthController {
             if (username != null) {
                 UserDetails userDetails = userService.loadUserByUsername(username);
                 if (jwtService.isTokenValid(refreshToken, userDetails)) {
+                    User user = userService.findByUsernameOrEmail(username)
+                            .orElseThrow(() -> new RuntimeException("User not found"));
+                    
                     String accessToken = jwtService.generateAccessToken(userDetails);
                     AuthResponse response = AuthResponse.builder()
                             .accessToken(accessToken)
+                            .role(user.getRole())
                             .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
                             .build();
                     return ResponseEntity.ok(response);

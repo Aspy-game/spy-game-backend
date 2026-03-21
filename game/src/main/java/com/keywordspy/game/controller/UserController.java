@@ -50,6 +50,7 @@ public class UserController {
             response.put("user_id", user.getId());
             response.put("username", user.getUsername());
             response.put("display_name", user.getDisplayName() != null ? user.getDisplayName() : "");
+            response.put("avatar_url", user.getAvatarUrl() != null ? user.getAvatarUrl() : "");
             response.put("email", user.getEmail());
             response.put("created_at", user.getCreatedAt().toString());
 
@@ -84,13 +85,17 @@ public class UserController {
             if (request.containsKey("avatar_url")) {
                 user.setAvatarUrl(request.get("avatar_url"));
             }
+            if (request.containsKey("avatar_url")) {
+                user.setAvatarUrl(request.get("avatar_url"));
+            }
 
             userService.saveUser(user);
 
             return ResponseEntity.ok(Map.of(
                     "user_id", user.getId(),
                     "username", user.getUsername(),
-                    "display_name", user.getDisplayName() != null ? user.getDisplayName() : ""
+                    "display_name", user.getDisplayName() != null ? user.getDisplayName() : "",
+                    "avatar_url", user.getAvatarUrl() != null ? user.getAvatarUrl() : ""
             ));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
