@@ -131,4 +131,46 @@ public class RoomController {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
+
+    // GET /api/rooms/:roomId — Lấy thông tin chi tiết phòng
+    @GetMapping("/{roomId}")
+    public ResponseEntity<?> getRoomDetail(@PathVariable String roomId) {
+        try {
+            Room room = roomService.getRoomById(roomId);
+            List<RoomPlayer> players = roomService.getPlayersInRoom(roomId);
+            return ResponseEntity.ok(Map.of(
+                    "room_id", room.getId(),
+                    "room_code", room.getRoomCode(),
+                    "host_id", room.getHostId(),
+                    "current_players", room.getCurrentPlayers(),
+                    "max_players", room.getMaxPlayers(),
+                    "status", room.getStatus().toString(),
+                    "is_private", room.isPrivate(),
+                    "players", players.stream().map(p -> Map.<String, Object>of(
+                            "user_id", p.getUserId(),
+                            "display_name", p.getDisplayName()
+                    )).toList()
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // GET /api/rooms/code/:roomCode — Tìm phòng bằng mã (dành cho tham gia bằng mã)
+    @GetMapping("/code/{roomCode}")
+    public ResponseEntity<?> getRoomByCode(@PathVariable String roomCode) {
+        try {
+            Room room = roomService.getRoomByCode(roomCode);
+            return ResponseEntity.ok(Map.of(
+                    "room_id", room.getId(),
+                    "room_code", room.getRoomCode(),
+                    "current_players", room.getCurrentPlayers(),
+                    "max_players", room.getMaxPlayers(),
+                    "status", room.getStatus().toString(),
+                    "is_private", room.isPrivate()
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
+        }
+    }
 }
