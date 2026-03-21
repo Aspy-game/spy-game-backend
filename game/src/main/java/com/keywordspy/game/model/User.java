@@ -24,7 +24,9 @@ public class User {
 
     private String passwordHash;
     
-    private String role = "ROLE_USER"; // Default role
+    private Role role = Role.ROLE_USER; // Default role
+
+    private boolean active = true;
 
     private LocalDateTime createdAt = LocalDateTime.now();
 }
