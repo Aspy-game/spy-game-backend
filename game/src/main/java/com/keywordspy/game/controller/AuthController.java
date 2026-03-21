@@ -6,6 +6,7 @@ import com.keywordspy.game.dto.RefreshRequest;
 import com.keywordspy.game.dto.RegisterRequest;
 import com.keywordspy.game.model.User;
 import com.keywordspy.game.service.JwtService;
+import com.keywordspy.game.service.TokenBlacklistService;
 import com.keywordspy.game.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -13,10 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
@@ -33,6 +31,9 @@ public class AuthController {
     @Autowired
     private JwtService jwtService;
 
+    @Autowired
+    private TokenBlacklistService tokenBlacklistService;
+
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
         try {
@@ -42,7 +43,7 @@ public class AuthController {
                     request.getPassword(),
                     request.getDisplayName()
             );
-            
+
             UserDetails userDetails = userService.loadUserByUsername(user.getUsername());
             String accessToken = jwtService.generateAccessToken(userDetails);
             String refreshToken = jwtService.generateRefreshToken(userDetails);
@@ -53,6 +54,7 @@ public class AuthController {
                     .displayName(user.getDisplayName())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
+                    .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
                     .build();
 
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
@@ -70,7 +72,7 @@ public class AuthController {
 
             User user = userService.findByUsername(request.getUsername())
                     .orElseThrow(() -> new RuntimeException("User not found after authentication"));
-            
+
             UserDetails userDetails = userService.loadUserByUsername(request.getUsername());
             String accessToken = jwtService.generateAccessToken(userDetails);
             String refreshToken = jwtService.generateRefreshToken(userDetails);
@@ -94,7 +96,7 @@ public class AuthController {
         try {
             String refreshToken = request.getRefreshToken();
             String username = jwtService.extractUsername(refreshToken);
-            
+
             if (username != null) {
                 UserDetails userDetails = userService.loadUserByUsername(username);
                 if (jwtService.isTokenValid(refreshToken, userDetails)) {
@@ -113,10 +115,26 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<?> logout() {
-        // In a stateless JWT setup, logout is primarily handled by the client 
-        // by deleting the token. For a more robust setup, we could maintain 
-        // a token blacklist. For now, we return the requested response.
-        return ResponseEntity.ok(Map.of("message", "Logged out"));
+public ResponseEntity<?> logout(@RequestHeader(value = "Authorization", required = false) String authHeader) {
+    if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("error", "No token provided"));
     }
+    try {
+        String token = authHeader.substring(7);
+        
+        // Check token có hợp lệ không trước khi blacklist
+        String username = jwtService.extractUsername(token);
+        if (username == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Invalid token"));
+        }
+
+        tokenBlacklistService.blacklistToken(token);
+        return ResponseEntity.ok(Map.of("message", "Logged out"));
+    } catch (Exception e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("error", "Invalid token"));
+    }
+}
 }

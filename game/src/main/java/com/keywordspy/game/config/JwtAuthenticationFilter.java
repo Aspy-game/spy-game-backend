@@ -1,6 +1,7 @@
 package com.keywordspy.game.config;
 
 import com.keywordspy.game.service.JwtService;
+import com.keywordspy.game.service.TokenBlacklistService;
 import com.keywordspy.game.service.UserService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -26,6 +27,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Autowired
     private UserService userService;
 
+    @Autowired
+    private TokenBlacklistService tokenBlacklistService;
+
     @Override
     protected void doFilterInternal(
             @NonNull HttpServletRequest request,
@@ -43,6 +47,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         try {
             jwt = authHeader.substring(7);
+
+            // Check token có trong blacklist không
+            if (tokenBlacklistService.isBlacklisted(jwt)) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             username = jwtService.extractUsername(jwt);
 
             if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
@@ -59,9 +70,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         } catch (Exception e) {
             // If token is invalid or malformed, we just continue the chain
-            // Spring Security will then block it if the endpoint is not permitted
         }
-        
+
         filterChain.doFilter(request, response);
     }
 }
