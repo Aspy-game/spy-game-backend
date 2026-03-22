@@ -17,8 +17,11 @@ import java.util.Map;
 @RequestMapping("/api")
 public class GameController {
 
-    @Autowired private GameService gameService;
-    @Autowired private UserService userService;
+    @Autowired
+    private GameService gameService;
+    @Autowired
+    private UserService userService;
+
 
     private User getCurrentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -26,15 +29,14 @@ public class GameController {
                 .orElseThrow(() -> new RuntimeException("User not found"));
     }
 
-    // =========================================================
-    // SECTION 1: GAME SETUP
-    // =========================================================
+    // T-018: POST /rooms/:roomId/start
 
     @PostMapping("/rooms/{roomId}/start")
     public ResponseEntity<?> startGame(@PathVariable String roomId) {
         try {
             User user = getCurrentUser();
             GameSession session = gameService.startGame(roomId, user.getId());
+
             return ResponseEntity.ok(Map.of(
                     "match_id", session.getMatchId(),
                     "message", "Game started"
@@ -57,19 +59,19 @@ public class GameController {
         }
     }
 
+
     @GetMapping("/game/{matchId}/state")
     public ResponseEntity<?> getGameState(@PathVariable String matchId) {
         try {
             User user = getCurrentUser();
+
             return ResponseEntity.ok(gameService.getGameState(matchId, user.getId()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
-    // =========================================================
-    // SECTION 2: PHASE ACTIONS (Describe / Chat / Vote)
-    // =========================================================
+    // T-022: POST /game/:matchId/describe
 
     @PostMapping("/game/{matchId}/describe")
     public ResponseEntity<?> submitDescription(
@@ -79,6 +81,7 @@ public class GameController {
             User user = getCurrentUser();
             String content = request.get("content");
             gameService.submitDescription(matchId, user.getId(), content);
+
             return ResponseEntity.ok(Map.of(
                     "submitted", true,
                     "word_count", content.trim().split("\\s+").length
@@ -87,6 +90,8 @@ public class GameController {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
+
+    // T-025: POST /game/:matchId/chat
 
     @PostMapping("/game/{matchId}/chat")
     public ResponseEntity<?> submitChat(
@@ -101,18 +106,22 @@ public class GameController {
         }
     }
 
+    // T-027: POST /game/:matchId/vote
+
     @PostMapping("/game/{matchId}/vote")
     public ResponseEntity<?> submitVote(
             @PathVariable String matchId,
             @RequestBody Map<String, String> request) {
         try {
             User user = getCurrentUser();
+
             gameService.submitVote(matchId, user.getId(), request.get("target_user_id"));
             return ResponseEntity.ok(Map.of("voted", true));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
+
 
     // =========================================================
     // SECTION 3: VÒNG ĐOÁN VAI TRÒ

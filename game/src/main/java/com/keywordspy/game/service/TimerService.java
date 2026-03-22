@@ -4,6 +4,8 @@ import com.keywordspy.game.model.GameSession;
 import com.keywordspy.game.model.GameSession.GameState;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
+
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.stereotype.Service;
 
@@ -18,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 @Service
 @EnableAsync
 public class TimerService {
+
 
     // =========================================================
     // THỜI GIAN MỖI PHASE (giây)
@@ -40,6 +43,7 @@ public class TimerService {
 
     @Autowired
     private SettingsService settingsService;
+
 
     // =========================================================
     // GET DURATIONS
@@ -117,6 +121,7 @@ public class TimerService {
         }
     }
 
+
     public int getRemainingSeconds(GameSession session) {
         if (session.getPhaseEndTime() == null) return 0;
         long remaining = java.time.Duration.between(
@@ -126,6 +131,7 @@ public class TimerService {
 
     public void startTimer(String matchId, int durationSeconds, Runnable onComplete) {
         cancelTimer(matchId); // hủy timer cũ nếu có
+
 
         ScheduledFuture<?> future = scheduler.schedule(() -> {
             try {

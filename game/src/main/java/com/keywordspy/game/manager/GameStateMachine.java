@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class GameStateMachine {
 
+
     public void transition(GameSession session, GameState newState) {
         GameState currentState = session.getState();
 
@@ -18,6 +19,7 @@ public class GameStateMachine {
         session.setState(newState);
         session.setUpdatedAt(java.time.LocalDateTime.now());
     }
+
 
     private boolean isValidTransition(GameState from, GameState to) {
         switch (from) {
@@ -49,4 +51,4 @@ public class GameStateMachine {
     public boolean isPhase(GameSession session, GameState state) {
         return session.getState() == state;
     }
-}
+
