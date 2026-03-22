@@ -7,6 +7,8 @@ import com.keywordspy.game.model.GameSession.GameState;
 import com.keywordspy.game.repository.MatchRepository;
 import com.keywordspy.game.repository.RoomRepository;
 import com.keywordspy.game.repository.RoomPlayerRepository;
+import com.keywordspy.game.repository.MatchPlayerRepository;
+import com.keywordspy.game.repository.UserStatsRepository;
 import com.keywordspy.game.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
@@ -30,10 +32,13 @@ public class GameService {
     @Autowired private RoomPlayerRepository roomPlayerRepository;
     @Autowired private RoomRepository roomRepository;
     @Autowired private MatchRepository matchRepository;
+    @Autowired private MatchPlayerRepository matchPlayerRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private UserStatsRepository userStatsRepository;
     @Autowired private SimpMessagingTemplate messagingTemplate;
     @Autowired private EconomyService economyService;
     @Autowired private SettingsService settingsService;
+    @Autowired private AiService aiService;
 
     // =========================================================
     // SECTION 1: GAME SETUP
@@ -48,12 +53,13 @@ public class GameService {
         if (room.getCurrentPlayers() < 2)
             throw new RuntimeException("Need at least 2 players to start");
 
-        // --- ECONOMY SYSTEM: Thu phí vào cửa ---
+        // --- ECONOMY SYSTEM: Thu phí vào cửa (Entry Fee: 10 xu) ---
+        int entryFee = 10;
         List<RoomPlayer> roomPlayers = roomPlayerRepository.findByRoomId(room.getId());
         for (RoomPlayer rp : roomPlayers) {
-            economyService.deductEntryFee(rp.getUserId(), 100);
+            economyService.deductEntryFee(rp.getUserId(), entryFee);
         }
-        // ---------------------------------------
+        // ---------------------------------------------------------
 
         KeywordPair keyword = keywordService.getRandomKeyword();
 
@@ -62,6 +68,7 @@ public class GameService {
         match.setCivilianKeyword(keyword.getCivilianKeyword());
         match.setSpyKeyword(keyword.getSpyKeyword());
         match.setStatus(MatchStatus.in_progress);
+        match.setStartedAt(LocalDateTime.now());
         Match savedMatch = matchRepository.save(match);
 
         GameSession session = new GameSession();
@@ -75,27 +82,94 @@ public class GameService {
         List<Player> players = createPlayers(room, savedMatch.getId());
         session.setPlayers(players);
 
-        List<Player> humanPlayers = players.stream().filter(p -> !p.isAi()).toList();
-        int spiesCfg = settingsService.find().map(s -> s.getSpiesCount() != null ? s.getSpiesCount() : 1).orElse(1);
-        int spiesCount = Math.max(1, Math.min(1, spiesCfg));
-        Player spy = humanPlayers.get(new Random().nextInt(humanPlayers.size()));
-        spy.setRole(PlayerRole.spy);
-        session.setSpyUserId(spy.getUserId());
-        savedMatch.setSpyUserId(spy.getUserId());
+        List<Player> allPlayers = new ArrayList<>(players);
+        Collections.shuffle(allPlayers);
+
+        String spyUserId = null;
+        
+        // --- ADMIN SELECTION: Kiểm tra nếu admin đã chọn Spy ---
+        if (room.getAdminSelectedSpyId() != null) {
+            String selectedId = room.getAdminSelectedSpyId();
+            if (players.stream().anyMatch(p -> p.getUserId().equals(selectedId))) {
+                spyUserId = selectedId;
+            }
+        }
+        
+        // Nếu admin không chọn hoặc người được chọn không có trong phòng
+        if (spyUserId == null) {
+            // Lọc ra các player là human để gán spy (AI không làm spy)
+            List<Player> humanPlayers = players.stream().filter(p -> !p.isAi()).toList();
+            if (!humanPlayers.isEmpty()) {
+                List<Player> shuffleHumans = new ArrayList<>(humanPlayers);
+                Collections.shuffle(shuffleHumans);
+                spyUserId = shuffleHumans.get(0).getUserId();
+            } else {
+                spyUserId = allPlayers.get(0).getUserId();
+            }
+        }
+
+        final String finalSpyUserId = spyUserId;
+        for (Player p : players) {
+            if (p.getUserId().equals(finalSpyUserId)) {
+                p.setRole(PlayerRole.spy);
+            } else {
+                p.setRole(PlayerRole.civilian);
+            }
+        }
+
+        session.setSpyUserId(finalSpyUserId);
+        savedMatch.setSpyUserId(finalSpyUserId);
         matchRepository.save(savedMatch);
+
+        // Reset admin selection sau khi dùng
+        room.setAdminSelectedSpyId(null);
+        roomRepository.save(room);
 
         gameSessions.put(savedMatch.getId(), session);
 
-        stateMachine.transition(session, GameState.ROLE_ASSIGN);
-        broadcastRoles(session);
+        // --- MATCH PLAYER: Khởi tạo dữ liệu người chơi trong trận ---
+        for (Player p : players) {
+            if (p.isAi()) continue;
+            MatchPlayer mp = new MatchPlayer();
+            mp.setMatchId(savedMatch.getId());
+            mp.setUserId(p.getUserId());
+            mp.setColor(p.getColor());
+            mp.setRole(p.getRole());
+            matchPlayerRepository.save(mp);
+        }
+        // ---------------------------------------------------------
 
-        // Vòng 1 bắt đầu thẳng vào DESCRIBING
-        moveToDescribing(session);
+        // Bắt đầu phase ROLE_ASSIGN (10 giây để xem keyword)
+        moveToRoleAssign(session);
 
         room.setStatus(RoomStatus.in_game);
         roomRepository.save(room);
 
+        // Thông báo GAME_START cho lobby/phòng
+        Map<String, Object> gameStart = new HashMap<>();
+        gameStart.put("type", "GAME_START");
+        gameStart.put("room_id", room.getId());
+        gameStart.put("match_id", savedMatch.getId());
+        messagingTemplate.convertAndSend("/topic/room/" + room.getId(), (Object) gameStart);
+
         return session;
+    }
+
+    private void moveToRoleAssign(GameSession session) {
+        stateMachine.transition(session, GameState.ROLE_ASSIGN);
+        session.setPhaseStartTime(LocalDateTime.now());
+        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(10)); // 10s xem vai
+
+        broadcastRoles(session);
+        broadcastPhase(session);
+
+        // Hẹn giờ kết thúc ROLE_ASSIGN để vào DESCRIBING
+        timerService.startTimer(session.getMatchId(), 10, () -> {
+            GameSession s = getSession(session.getMatchId());
+            if (s.getState() == GameState.ROLE_ASSIGN) {
+                moveToDescribing(s);
+            }
+        });
     }
 
     private List<Player> createPlayers(Room room, String matchId) {
@@ -116,17 +190,16 @@ public class GameService {
             players.add(player);
         }
 
-        while (players.size() < 6) {
-            Player aiPlayer = new Player();
-            aiPlayer.setUserId("ai_" + UUID.randomUUID().toString().substring(0, 8));
-            aiPlayer.setUsername("AI Civilian");
-            aiPlayer.setDisplayName("AI Civilian");
-            aiPlayer.setColor(colors.isEmpty() ? PlayerColor.red : colors.remove(0));
-            aiPlayer.setRole(PlayerRole.ai_civilian);
-            aiPlayer.setAi(true);
-            aiPlayer.setAlive(true);
-            players.add(aiPlayer);
-        }
+        // LUÔN LUÔN THÊM ĐÚNG 1 AI (HIGHLIGHT CỦA GAME)
+        Player aiPlayer = new Player();
+        aiPlayer.setUserId("ai_official");
+        aiPlayer.setUsername("AI KeywordSpy");
+        aiPlayer.setDisplayName("AI KeywordSpy");
+        aiPlayer.setColor(colors.isEmpty() ? PlayerColor.red : colors.remove(0));
+        aiPlayer.setRole(PlayerRole.ai_civilian);
+        aiPlayer.setAi(true);
+        aiPlayer.setAlive(true);
+        players.add(aiPlayer);
 
         return players;
     }
@@ -143,14 +216,25 @@ public class GameService {
         Player player = getAlivePlayer(session, userId);
 
         String[] words = content.trim().split("\\s+");
-        if (words.length < 5 || words.length > 20)
-            throw new RuntimeException("Description must be 5-20 words");
+        // Giảm yêu cầu độ dài để người chơi thoải mái test
+        if (words.length < 1 || words.length > 30)
+            throw new RuntimeException("Mô tả phải từ 1-30 từ");
 
         session.getDescriptions()
                 .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>())
                 .put(userId, content);
 
         broadcastDescriptions(session);
+
+        // KÍCH HOẠT AI MÔ TẢ (Nếu chưa bị thao túng)
+        if (session.getAbilityType() != SpyAbility.fake_message && isAiAlive(session)) {
+            Player ai = getAiPlayer(session);
+            Map<String, String> roundDescs = session.getCurrentRoundDescriptions();
+            if (!roundDescs.containsKey(ai.getUserId())) {
+                // AI sẽ mô tả dựa trên mô tả của người vừa nhắn (content)
+                autoDescribeForAi(session, content);
+            }
+        }
 
         if (allPlayersDescribed(session)) {
             timerService.cancelTimer(matchId);
@@ -167,29 +251,34 @@ public class GameService {
 
         Map<String, Object> chatMsg = new HashMap<>();
         chatMsg.put("user_id", userId);
-        chatMsg.put("display_name", player.getDisplayName());
-        chatMsg.put("color", player.getColor().toString());
+        chatMsg.put("display_name", player.getDisplayName() != null ? player.getDisplayName() : player.getUsername());
+        chatMsg.put("color", player.getColor() != null ? player.getColor().toString() : "red");
         chatMsg.put("content", content);
+        chatMsg.put("sender", chatMsg.get("display_name"));
         chatMsg.put("sent_at", LocalDateTime.now().toString());
-        messagingTemplate.convertAndSend("/topic/game/" + matchId + "/chat", (Object) chatMsg);
+        messagingTemplate.convertAndSend("/topic/match/" + matchId + "/chat", (Object) chatMsg);
+
+        // KÍCH HOẠT AI THẢO LUẬN (Nếu chưa bị thao túng và AI chưa chat vòng này)
+        // Trong phase Thảo luận, AI có thể chat nhiều lần, nhưng lần đầu tiên cần context
+        if (session.getAbilityType() != SpyAbility.fake_message && isAiAlive(session)) {
+            // Giả sử AI chỉ tự động thảo luận 1 lần ngay sau tin nhắn đầu tiên của human
+            // Hoặc có thể thêm logic xác suất/thời gian ở đây
+            autoDiscussForAi(session, content);
+        }
     }
 
     public void submitVote(String matchId, String voterId, String targetId) {
         GameSession session = getSession(matchId);
-        if (session.getState() != GameState.VOTING)
-            throw new RuntimeException("Not in voting phase");
-
-        Player voter = getAlivePlayer(session, voterId);
-        Player target = session.getPlayer(targetId);
-        if (target == null || !target.isAlive())
-            throw new RuntimeException("Target not found or eliminated");
-        if (voterId.equals(targetId))
-            throw new RuntimeException("Cannot vote for yourself");
+        if (session.getState() != GameState.VOTING) {
+            return; // Tránh lỗi khi phase đã chuyển đổi nhanh
+        }
 
         Map<String, String> currentVotes = session.getVotes()
                 .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
-        if (currentVotes.containsKey(voterId))
-            throw new RuntimeException("Already voted");
+
+        if (currentVotes.containsKey(voterId)) {
+            return; // Đã vote rồi thì bỏ qua
+        }
 
         currentVotes.put(voterId, targetId);
         broadcastVoteCounts(session);
@@ -248,6 +337,8 @@ public class GameService {
         boolean aiAlive = isAiAlive(session);
 
         for (Player player : session.getAlivePlayers()) {
+            if (player.isAi()) continue;
+
             String uid = player.getUserId();
             boolean isSpy = uid.equals(session.getSpyUserId());
             boolean correct = session.getRoleCheckResults().getOrDefault(uid, false);
@@ -255,99 +346,110 @@ public class GameService {
             Map<String, Object> result = new HashMap<>();
             result.put("type", "ROLE_CHECK_RESULT");
             result.put("correct", correct);
+            
+            // Xác định vai trò hiển thị (Civilian, Spy, Infected)
+            String displayRole = player.getRole().toString();
+            if (player.isInfected()) {
+                displayRole = "infected";
+            }
+            result.put("actual_role", displayRole);
 
             if (!isSpy) {
-                // === CIVILIAN ===
-            if (correct) {
-                result.put("message", "Chính xác! Bạn là Dân Thường");
-                result.put("reward_coins", true);
-                
-                // --- ECONOMY SYSTEM: Thưởng đoán đúng vai ---
-                economyService.addReward(uid, 20, Transaction.TransactionType.GUESS_BONUS, "Đoán đúng vai Civilian", true);
-                // --------------------------------------------
-            } else {
+                // === CIVILIAN & INFECTED ===
+                if (correct) {
+                    result.put("message", player.isInfected() ? "Chính xác! Bạn là Kẻ Bị Tha Hóa" : "Chính xác! Bạn là Dân Thường");
+                    result.put("reward_coins", true);
+                    
+                    int reward = player.isInfected() ? session.getRewardInfectedGuess() : session.getRewardCivilianGuess();
+                    
+                    // --- ECONOMY SYSTEM: Thưởng đoán đúng vai ---
+                    economyService.addReward(uid, reward, Transaction.TransactionType.GUESS_BONUS, "Đoán đúng vai " + displayRole, true);
+                    // --------------------------------------------
+                } else {
                     result.put("message", "Sai rồi! Không nhận được xu");
                     result.put("reward_coins", false);
                 }
-                result.put("ability_available", null);
+                result.put("abilities_available", null);
 
             } else {
                 // === SPY ===
-                if (!correct) {
-                    // Spy đoán sai → không biết mình là Spy, mất cả 2 khả năng
-                    result.put("message", "Sai rồi! Không nhận được xu");
-                    result.put("reward_coins", false);
-                    result.put("ability_available", null);
-                    // spyKnowsRole giữ false
-                } else {
-                    // Spy đoán đúng → biết mình là Spy
+                if (correct) {
+                    // Spy đoán đúng — biết mình là Spy
                     session.setSpyKnowsRole(true);
                     result.put("message", "Chính xác! Bạn là Gián Điệp");
-                    result.put("reward_coins", true); // Spy nhận xu khi đoán đúng
-
+                    result.put("reward_coins", true); 
+                    
                     // --- ECONOMY SYSTEM: Thưởng Spy đoán đúng vai ---
-                    economyService.addReward(uid, 50, Transaction.TransactionType.GUESS_BONUS, "Spy đoán đúng vai", true);
+                    economyService.addReward(uid, session.getRewardSpyGuess(), Transaction.TransactionType.GUESS_BONUS, "Spy đoán đúng vai", true);
                     // ------------------------------------------------
 
-                    if (aiAlive) {
-                        // AI còn sống → offer Giả Mạo AI
-                        result.put("ability_available", "fake_message");
-                        result.put("ability_description", "Giả Mạo AI: mỗi vòng gửi 1 tin nhắn thay AI");
-                        result.put("ability_tradeoff", "Nếu chọn dùng, bạn sẽ mất quyền Tha Hóa vĩnh viễn");
-                    } else {
-                        // AI đã chết → offer Tha Hóa
-                        result.put("ability_available", "infection");
-                        result.put("ability_description", "Tha Hóa: chọn 1 Dân Thường làm đồng minh bí mật");
-                        result.put("ability_tradeoff", "Phải chọn người ngay bây giờ, hết giờ sẽ mất quyền");
-                        result.put("alive_civilians", getAliveCivilianList(session));
-                    }
+                    // LUÔN CHO PHÉP CHỌN 1 TRONG 2 KỸ NĂNG (NẾU ĐOÁN ĐÚNG)
+                    result.put("abilities_available", getAvailableAbilitiesForSpy(session));
+                    
+                    // Gửi thêm danh sách người để Tha Hóa nếu cần
+                    result.put("alive_humans", getAliveCivilianList(session));
+                } else {
+                    // Spy đoán sai
+                    result.put("message", "Sai rồi! Bạn không nhận ra bản thân.");
+                    result.put("reward_coins", false);
+                    result.put("abilities_available", null);
                 }
             }
 
-            messagingTemplate.convertAndSendToUser(
-                    player.getUsername(),
-                    "/queue/role-check-result",
-                    result
-            );
+            if (player.getUsername() != null) {
+                messagingTemplate.convertAndSendToUser(
+                        player.getUsername(),
+                        "/queue/role-check-result",
+                        result
+                );
+                
+                // Gửi thêm một kênh backup để FE dễ bắt nếu kênh trên bị trùng lặp/chặn
+                messagingTemplate.convertAndSendToUser(
+                        player.getUsername(),
+                        "/queue/role-result",
+                        result
+                );
+            }
         }
     }
 
-    /**
-     * Spy xác nhận dùng hay không dùng khả năng — gọi trong phase ROLE_CHECK_RESULT.
-     * useAbility = true → kích hoạt khả năng
-     * useAbility = false → từ chối, biết mình là Spy nhưng không có khả năng
-     */
-    public Map<String, Object> confirmSpyAbility(String matchId, String userId, boolean useAbility) {
+    public Map<String, Object> confirmSpyAbility(String matchId, String userId, String abilityTypeStr) {
         GameSession session = getSession(matchId);
-
-        if (session.getState() != GameState.ROLE_CHECK_RESULT)
-            throw new RuntimeException("Không phải phase kết quả Đoán Vai");
-        if (!userId.equals(session.getSpyUserId()))
-            throw new RuntimeException("Chỉ Gián Điệp mới có thể xác nhận khả năng");
-        if (!session.isSpyKnowsRole())
-            throw new RuntimeException("Gián Điệp chưa đoán đúng vai trò");
-        if (session.getAbilityType() != null || session.isSpyAbilityDeclined())
-            throw new RuntimeException("Đã xác nhận rồi");
-
-        if (!useAbility) {
-            // Spy từ chối — không có khả năng cả ván
-            session.setSpyAbilityDeclined(true);
-            return Map.of("confirmed", true, "ability", "none",
-                    "message", "Bạn chọn không dùng khả năng. Chúc may mắn!");
+        Player spy = session.getPlayer(userId);
+        if (spy == null || spy.getRole() != PlayerRole.spy) {
+            throw new RuntimeException("Chỉ Gián Điệp mới có thể xác nhận kỹ năng");
+        }
+        
+        if (!session.isSpyKnowsRole()) {
+            throw new RuntimeException("Bạn cần đoán đúng vai trò để sử dụng kỹ năng");
         }
 
-        // Spy đồng ý dùng
-        boolean aiAlive = isAiAlive(session);
-        if (aiAlive) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("confirmed", true);
+
+        SpyAbility selectedAbility;
+        try {
+            selectedAbility = SpyAbility.valueOf(abilityTypeStr.toLowerCase());
+        } catch (Exception e) {
+            selectedAbility = SpyAbility.none;
+        }
+
+        if (selectedAbility == SpyAbility.fake_message) {
+            if (!isAiAlive(session)) {
+                throw new RuntimeException("AI đã bị loại, không thể dùng kỹ năng Thao túng AI");
+            }
             session.setAbilityType(SpyAbility.fake_message);
-            return Map.of("confirmed", true, "ability", "fake_message",
-                    "message", "Đã kích hoạt Giả Mạo AI! Dùng được mỗi vòng từ vòng 2.");
-        } else {
-            // Tha Hóa — Spy phải chọn target ngay (trong 20s này)
+            result.put("ability", "fake_message");
+        } else if (selectedAbility == SpyAbility.infection) {
             session.setAbilityType(SpyAbility.infection);
-            return Map.of("confirmed", true, "ability", "infection",
-                    "message", "Đã kích hoạt Tha Hóa! Hãy chọn người bạn muốn tha hóa ngay.");
+            result.put("ability", "infection");
+        } else {
+            session.setAbilityType(SpyAbility.none);
+            session.setSpyAbilityDeclined(true);
+            result.put("ability", "none");
         }
+
+        return result;
     }
 
     // =========================================================
@@ -366,36 +468,36 @@ public class GameService {
             throw new RuntimeException("Chỉ dùng được trong phase Mô Tả hoặc Thảo Luận");
         if (!userId.equals(session.getSpyUserId()))
             throw new RuntimeException("Chỉ Gián Điệp mới có thể dùng khả năng này");
-        if (session.getAbilityType() != SpyAbility.fake_message)
-            throw new RuntimeException("Khả năng Giả Mạo AI chưa được kích hoạt");
+        if (!session.isSpyKnowsRole())
+            throw new RuntimeException("Bạn cần đoán đúng vai trò để mở khóa kỹ năng");
         if (!isAiAlive(session))
-            throw new RuntimeException("AI đã bị loại, không thể giả mạo");
-        if (session.isFakeMessageUsedThisRound())
-            throw new RuntimeException("Đã dùng Giả Mạo AI trong vòng này rồi");
-
-        String[] words = content.trim().split("\\s+");
-        if (words.length < 5 || words.length > 20)
-            throw new RuntimeException("Nội dung phải từ 5-20 từ");
+            throw new RuntimeException("AI đã bị loại, không thể thao túng");
 
         Player aiPlayer = getAiPlayer(session);
-
-        session.setFakeMessageUsedThisRound(true);
-        session.getFakeDescriptions().put(session.getCurrentRound(), content);
-
-        // --- ECONOMY SYSTEM: Thưởng kỹ năng Spy ---
-        economyService.addReward(userId, 30, Transaction.TransactionType.SKILL_BONUS, "Kỹ năng Giả Mạo AI", true);
-        // ------------------------------------------
 
         // Broadcast như tin của AI — FE không biết là fake
         Map<String, Object> fakeMsg = new HashMap<>();
         fakeMsg.put("user_id", aiPlayer.getUserId());
-        fakeMsg.put("display_name", aiPlayer.getDisplayName());
+        fakeMsg.put("display_name", "Người chơi " + aiPlayer.getColor().toString());
         fakeMsg.put("color", aiPlayer.getColor().toString());
         fakeMsg.put("content", content);
         fakeMsg.put("sent_at", LocalDateTime.now().toString());
-        messagingTemplate.convertAndSend("/topic/game/" + matchId + "/chat", (Object) fakeMsg);
+        fakeMsg.put("is_manipulated", true); // Flag ẩn cho BE/Admin
+        
+        messagingTemplate.convertAndSend("/topic/match/" + matchId + "/chat", (Object) fakeMsg);
 
-        return Map.of("sent", true, "displayed_as", aiPlayer.getDisplayName());
+        // NẾU ĐANG TRONG PHASE MÔ TẢ, LƯU LẠI MÔ TẢ CỦA AI
+        if (session.getState() == GameState.DESCRIBING) {
+            session.getDescriptions()
+                    .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>())
+                    .put(aiPlayer.getUserId(), content);
+            broadcastDescriptions(session);
+        }
+
+        // Thưởng xu cho Spy mỗi lần thao túng thành công
+        economyService.addReward(userId, 30, Transaction.TransactionType.SKILL_BONUS, "Thao túng AI", true);
+
+        return Map.of("sent", true, "message", "Đã gửi tin nhắn giả danh AI");
     }
 
     /**
@@ -424,6 +526,16 @@ public class GameService {
         session.setInfectUsed(true);
         session.setInfectedUserId(targetUserId);
 
+        // --- MATCH PLAYER: Cập nhật trạng thái bị tha hóa ---
+        matchPlayerRepository.findByMatchId(matchId).stream()
+                .filter(mp -> mp.getUserId().equals(targetUserId))
+                .findFirst()
+                .ifPresent(mp -> {
+                    mp.setInfected(true);
+                    matchPlayerRepository.save(mp);
+                });
+        // --------------------------------------------------
+
         // Notify private cho Infected
         Map<String, Object> infectionNotif = new HashMap<>();
         infectionNotif.put("type", "INFECTED");
@@ -443,7 +555,17 @@ public class GameService {
     private void processVoteResult(GameSession session) {
         String eliminatedId = voteManager.processVotes(session);
         if (eliminatedId == null) {
+            // Trường hợp hòa (tie)
             stateMachine.transition(session, GameState.VOTE_TIE);
+            session.setPhaseStartTime(LocalDateTime.now());
+            session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.VOTE_TIE_DURATION));
+            timerService.startVoteTieTimer(session.getMatchId());
+            
+            // Log chi tiết cho F12
+            System.out.println("[GAME-LOG] Vote Tie in match: " + session.getMatchId() + ", Round: " + session.getCurrentRound());
+            
+            // Thông báo kết quả hòa cho FE
+            broadcastRoundResult(session); 
             broadcastPhase(session);
         } else {
             eliminatePlayer(session, eliminatedId);
@@ -456,10 +578,31 @@ public class GameService {
             player.setAlive(false);
             player.setEliminatedRound(session.getCurrentRound());
             session.setEliminatedUserId(userId);
+
+            // --- MATCH PLAYER: Lưu vòng bị loại ---
+            matchPlayerRepository.findByMatchId(session.getMatchId()).stream()
+                    .filter(mp -> mp.getUserId().equals(userId))
+                    .findFirst()
+                    .ifPresent(mp -> {
+                        mp.setEliminatedRound(session.getCurrentRound());
+                        matchPlayerRepository.save(mp);
+                    });
+            // ------------------------------------
         }
         stateMachine.transition(session, GameState.ROUND_RESULT);
+        session.setPhaseStartTime(LocalDateTime.now());
+        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.ROUND_RESULT_DURATION));
+        timerService.startRoundResultTimer(session.getMatchId());
+        
         broadcastRoundResult(session);
-        checkWinCondition(session);
+        broadcastPhase(session);
+    }
+
+    public void onRoundResultEnd(String matchId) {
+        GameSession session = getSession(matchId);
+        if (session.getState() == GameState.ROUND_RESULT) {
+            checkWinCondition(session);
+        }
     }
 
     private void checkWinCondition(GameSession session) {
@@ -474,10 +617,12 @@ public class GameService {
         }
 
         // Civilians (không kể Spy) còn 1 → Spy thắng
-        long aliveNonSpy = session.getAlivePlayers().stream()
-                .filter(p -> !p.getUserId().equals(session.getSpyUserId()))
+        // Logic mới: tính cả người bị tha hóa (infected) thuộc phe Spy
+        long aliveCivilians = session.getAlivePlayers().stream()
+                .filter(p -> p.getRole() == PlayerRole.civilian && !p.isInfected())
                 .count();
-        if (aliveNonSpy <= 1) {
+        
+        if (aliveCivilians <= 1) {
             session.setWinnerRole(WinnerRole.spy);
             stateMachine.transition(session, GameState.GAME_OVER);
             broadcastGameOver(session);
@@ -511,7 +656,7 @@ public class GameService {
     private void moveToRoleCheck(GameSession session) {
         stateMachine.transition(session, GameState.ROLE_CHECK);
         session.setPhaseStartTime(LocalDateTime.now());
-        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.ROLE_CHECK_DURATION));
+        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(timerService.getRoleCheckDuration()));
         timerService.startRoleCheckTimer(session.getMatchId());
         autoRoleCheckForAi(session);
         broadcastPhase(session);
@@ -520,7 +665,7 @@ public class GameService {
     private void moveToRoleCheckResult(GameSession session) {
         stateMachine.transition(session, GameState.ROLE_CHECK_RESULT);
         session.setPhaseStartTime(LocalDateTime.now());
-        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.ROLE_CHECK_RESULT_DURATION));
+        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(timerService.getRoleCheckResultDuration()));
         timerService.startRoleCheckResultTimer(session.getMatchId());
 
         // Gửi kết quả cá nhân cho từng người
@@ -531,16 +676,20 @@ public class GameService {
     private void moveToDescribing(GameSession session) {
         stateMachine.transition(session, GameState.DESCRIBING);
         session.setPhaseStartTime(LocalDateTime.now());
-        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DESCRIBE_DURATION));
+        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(timerService.getDescribeDuration()));
         timerService.startDescribeTimer(session.getMatchId());
-        autoDescribeForAi(session);
+        
+        // Gửi phase thông báo trước
         broadcastPhase(session);
+        
+        // AI sẽ không tự động mô tả ngay lập tức. 
+        // Nó sẽ đợi ít nhất 1 người chơi mô tả để lấy ngữ cảnh.
     }
 
     private void moveToDiscussing(GameSession session) {
         stateMachine.transition(session, GameState.DISCUSSING);
         session.setPhaseStartTime(LocalDateTime.now());
-        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.DISCUSS_DURATION));
+        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(timerService.getDiscussDuration()));
         timerService.startDiscussTimer(session.getMatchId());
         broadcastPhase(session);
     }
@@ -548,20 +697,57 @@ public class GameService {
     private void moveToVoting(GameSession session) {
         stateMachine.transition(session, GameState.VOTING);
         session.setPhaseStartTime(LocalDateTime.now());
-        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(TimerService.VOTE_DURATION));
+        session.setPhaseEndTime(LocalDateTime.now().plusSeconds(timerService.getVoteDuration()));
         timerService.startVoteTimer(session.getMatchId());
         autoVoteForAi(session);
         broadcastPhase(session);
     }
 
     // =========================================================
-    // SECTION 7: TIMER CALLBACKS
+    // SECTION 7: TIMER CALLBACKS & ADMIN ACTIONS
     // =========================================================
+
+    public void skipPhase(String matchId) {
+        GameSession session = getSession(matchId);
+        timerService.cancelTimer(matchId);
+         // Nếu game đã kết thúc, không làm gì cả
+        if (session.getState() == GameState.GAME_OVER) {
+            return;
+        }
+
+        switch (session.getState()) {
+            case DESCRIBING -> onDescribePhaseEnd(matchId);
+            case DISCUSSING -> onDiscussPhaseEnd(matchId);
+            case VOTING -> onVotePhaseEnd(matchId);
+            case VOTE_TIE -> onVoteTieEnd(matchId);
+            case ROLE_CHECK -> onRoleCheckPhaseEnd(matchId);
+            case ROLE_CHECK_RESULT -> onRoleCheckResultPhaseEnd(matchId);
+            default -> throw new RuntimeException("Cannot skip phase in state: " + session.getState());
+        }
+    }
+
+    public void onVoteTieEnd(String matchId) {
+        GameSession session = getSession(matchId);
+        if (session.getState() == GameState.VOTE_TIE) {
+            startNextRound(session);
+        }
+    }
 
     public void onDescribePhaseEnd(String matchId) {
         GameSession session = getSession(matchId);
-        if (session.getState() == GameState.DESCRIBING)
+        if (session.getState() == GameState.DESCRIBING) {
+            // Điền nội dung mặc định cho người chưa mô tả
+            Map<String, String> roundDesc = session.getDescriptions()
+                    .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
+            
+            for (Player p : session.getAlivePlayers()) {
+                if (!roundDesc.containsKey(p.getUserId())) {
+                    roundDesc.put(p.getUserId(), "Người này không nhắn gì cả");
+                }
+            }
+            broadcastDescriptions(session);
             moveToDiscussing(session);
+        }
     }
 
     public void onDiscussPhaseEnd(String matchId) {
@@ -576,19 +762,18 @@ public class GameService {
             processVoteResult(session);
     }
 
-    /**
-     * Hết 20s đoán vai — ai chưa đoán xem như bỏ qua (không nhận lợi ích).
-     * Chuyển sang phase kết quả.
-     */
     public void onRoleCheckPhaseEnd(String matchId) {
         GameSession session = getSession(matchId);
         if (session.getState() == GameState.ROLE_CHECK) {
             // Người chưa đoán → ghi nhận là sai (không nhận lợi ích)
             for (Player player : session.getAlivePlayers()) {
+                if (player.isAi()) continue;
                 if (!session.hasSubmittedRoleGuess(player.getUserId())) {
                     session.getRoleCheckResults().put(player.getUserId(), false);
                 }
             }
+            // Hủy timer nếu có và chuyển phase
+            timerService.cancelTimer(matchId);
             moveToRoleCheckResult(session);
         }
     }
@@ -635,56 +820,46 @@ public class GameService {
         }
     }
 
-    private void autoDescribeForAi(GameSession session) {
+    private void autoDescribeForAi(GameSession session, String context) {
         if (session.getState() != GameState.DESCRIBING) return;
-        for (Player p : session.getAlivePlayers()) {
-            if (p.isAi()) {
-                Map<String, String> roundDesc = session.getDescriptions()
-                        .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
-                if (!roundDesc.containsKey(p.getUserId())) {
-                    try {
-                        String content = generateAiDescription(session);
-                        // Bỏ qua validation độ dài để an toàn
-                        roundDesc.put(p.getUserId(), content);
-                    } catch (Exception ignored) { }
-                }
-            }
+        Player ai = getAiPlayer(session);
+        
+        Map<String, String> roundDesc = session.getDescriptions()
+                .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
+        
+        if (!roundDesc.containsKey(ai.getUserId())) {
+            try {
+                // Sử dụng context (mô tả của human) để AI mô tả theo
+                String content = aiService.getAiDescription(session.getCivilianKeyword(), session.getCurrentRound());
+                roundDesc.put(ai.getUserId(), content);
+                broadcastDescriptions(session);
+            } catch (Exception ignored) { }
         }
-        broadcastDescriptions(session);
     }
 
-    private String generateAiDescription(GameSession session) {
-        String key = session.getCivilianKeyword();
-        String[] templates = new String[]{
-                "Liên tưởng đến " + key + " nhưng không trực tiếp",
-                "Gợi nhớ một thứ gần với " + key,
-                "Hơi hướng " + key + ", khá trừu tượng",
-                "Nghĩ về chủ đề như " + key + " nhưng khác chữ",
-                "Cảm giác tương tự " + key + " ở bối cảnh khác"
-        };
-        return templates[new Random().nextInt(templates.length)];
+    private void autoDiscussForAi(GameSession session, String context) {
+        if (session.getState() != GameState.DISCUSSING) return;
+        Player ai = getAiPlayer(session);
+
+        try {
+            // Giả lập AI suy nghĩ một chút
+            String content = aiService.getAiDescription(session.getCivilianKeyword(), session.getCurrentRound());
+            
+            Map<String, Object> aiMsg = new HashMap<>();
+            aiMsg.put("user_id", ai.getUserId());
+            aiMsg.put("display_name", ai.getDisplayName());
+            aiMsg.put("color", ai.getColor().toString());
+            aiMsg.put("content", content);
+            aiMsg.put("sender", ai.getDisplayName());
+            aiMsg.put("sent_at", LocalDateTime.now().toString());
+            
+            messagingTemplate.convertAndSend("/topic/match/" + session.getMatchId() + "/chat", (Object) aiMsg);
+        } catch (Exception ignored) { }
     }
 
     private void autoVoteForAi(GameSession session) {
-        if (session.getState() != GameState.VOTING) return;
-        List<Player> alive = session.getAlivePlayers();
-        Map<String, String> currentVotes = session.getVotes()
-                .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
-
-        for (Player ai : alive) {
-            if (!ai.isAi()) continue;
-            if (currentVotes.containsKey(ai.getUserId())) continue;
-
-            List<Player> candidates = new ArrayList<>();
-            for (Player t : alive) {
-                if (!t.getUserId().equals(ai.getUserId())) candidates.add(t);
-            }
-            if (candidates.isEmpty()) continue;
-            Player target = candidates.get(new Random().nextInt(candidates.size()));
-            try {
-                submitVote(session.getMatchId(), ai.getUserId(), target.getUserId());
-            } catch (Exception ignored) { }
-        }
+        // AI KHÔNG CÒN KHẢ NĂNG VOTE
+        return;
     }
 
     public Map<String, Object> getGameState(String matchId, String userId) {
@@ -694,28 +869,84 @@ public class GameService {
         Map<String, Object> state = new HashMap<>();
         state.put("match_id", matchId);
         state.put("round", session.getCurrentRound());
-        state.put("phase", session.getState().toString());
-        if (session.getPhaseEndTime() != null)
+        state.put("phase", session.getState() != null ? session.getState().toString() : "WAITING");
+        
+        if (session.getPhaseEndTime() != null) {
             state.put("phase_end_at", session.getPhaseEndTime().toString());
+            state.put("remaining_seconds", timerService.getRemainingSeconds(session));
+        }
 
-        state.put("players", session.getAlivePlayers().stream().map(p -> {
+        List<Map<String, Object>> playersList = session.getPlayers().stream().map(p -> {
             Map<String, Object> pm = new HashMap<>();
             pm.put("user_id", p.getUserId());
-            pm.put("display_name", p.getDisplayName());
-            pm.put("color", p.getColor().toString());
+            
+            // Nếu game đã bắt đầu (sau giai đoạn WAITING), ẩn danh tính
+            if (session.getState() != null && session.getState() != GameState.ROLE_ASSIGN && session.getState() != GameState.GAME_OVER) {
+                pm.put("display_name", p.getColor() != null ? "Người chơi " + p.getColor().toString() : "Người chơi");
+            } else {
+                pm.put("display_name", p.getDisplayName() != null ? p.getDisplayName() : p.getUsername());
+            }
+            
+            pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
             pm.put("is_alive", p.isAlive());
+            pm.put("role", p.getRole() != null ? p.getRole().toString() : "civilian");
             return pm;
-        }).toList());
+        }).toList();
+        
+        state.put("players", playersList);
 
         if (player != null) {
-            state.put("your_role", player.getRole().toString());
-            state.put("your_color", player.getColor().toString());
-            state.put("your_keyword", player.getRole() == PlayerRole.spy
+            state.put("your_role", player.getRole() != null ? player.getRole().toString() : "civilian");
+            
+            // Cập nhật role thực sự cho người bị tha hóa
+            if (player.isInfected()) {
+                state.put("your_role", "infected");
+            }
+
+            state.put("your_color", player.getColor() != null ? player.getColor().toString() : "red");
+            
+            // Trả về từ khóa phù hợp (Infected dùng từ khóa của Spy)
+            state.put("your_keyword", (player.getRole() == PlayerRole.spy || player.isInfected())
                     ? session.getSpyKeyword()
                     : session.getCivilianKeyword());
+            
+            // Trả về kỹ năng đã chọn nếu là Spy
+            if (player.getRole() == PlayerRole.spy) {
+                state.put("selected_ability", session.getAbilityType());
+            }
+
+            // THÊM: Gửi kèm kết quả đoán vai nếu đang ở phase kết quả
+            if (session.getState() == GameState.ROLE_CHECK_RESULT) {
+                boolean correct = session.getRoleCheckResults().getOrDefault(userId, false);
+                state.put("role_check_correct", correct);
+                
+                if (player.getRole() == PlayerRole.spy && correct) {
+                    state.put("can_use_ability", true);
+                    state.put("abilities", getAvailableAbilitiesForSpy(session));
+                    state.put("alive_humans", getAliveCivilianList(session));
+                }
+            }
         }
 
         return state;
+    }
+
+    private List<Map<String, String>> getAvailableAbilitiesForSpy(GameSession session) {
+        boolean aiAlive = isAiAlive(session);
+        List<Map<String, String>> abilities = new ArrayList<>();
+        if (aiAlive) {
+            abilities.add(Map.of(
+                "type", "fake_message",
+                "name", "Thao túng AI",
+                "description", "Bạn có thể chat thay cho AI (hoặc để AI tự chat) mỗi vòng 1 lần."
+            ));
+        }
+        abilities.add(Map.of(
+            "type", "infection",
+            "name", "Tha Hóa",
+            "description", "Chọn 1 người chơi để biến thành đồng minh (nhận từ khóa của bạn)."
+        ));
+        return abilities;
     }
 
     public GameSession getSession(String matchId) {
@@ -731,47 +962,105 @@ public class GameService {
 
     private void broadcastRoles(GameSession session) {
         for (Player player : session.getPlayers()) {
+            if (player.isAi()) continue;
+            
             Map<String, Object> roleMsg = new HashMap<>();
             roleMsg.put("match_id", session.getMatchId());
             roleMsg.put("round", session.getCurrentRound());
-            roleMsg.put("role", player.getRole().toString());
+            
+            // CHỈ THÔNG BÁO TỪ KHÓA, KHÔNG CUNG CẤP DANH TÍNH (ROLE) KHI BẮT ĐẦU
+            roleMsg.put("role", "unknown"); 
+            
             roleMsg.put("color", player.getColor().toString());
-            // Tất cả nhận keyword nhưng chưa biết mình là vai gì
             roleMsg.put("your_keyword", player.getRole() == PlayerRole.spy
                     ? session.getSpyKeyword()
                     : session.getCivilianKeyword());
-            messagingTemplate.convertAndSendToUser(player.getUserId(), "/queue/role", roleMsg);
+            
+            // Principal name trong Spring Security là username hoặc email dùng lúc login
+            messagingTemplate.convertAndSendToUser(player.getUsername(), "/queue/role", roleMsg);
         }
     }
 
     private void broadcastPhase(GameSession session) {
         Map<String, Object> phaseMsg = new HashMap<>();
         phaseMsg.put("match_id", session.getMatchId());
-        phaseMsg.put("phase", session.getState().toString());
+        phaseMsg.put("phase", session.getState() != null ? session.getState().toString() : "WAITING");
         phaseMsg.put("round", session.getCurrentRound());
-        if (session.getPhaseEndTime() != null)
+        if (session.getPhaseEndTime() != null) {
             phaseMsg.put("phase_end_at", session.getPhaseEndTime().toString());
-        phaseMsg.put("players", session.getAlivePlayers().stream().map(p -> {
+            phaseMsg.put("remaining_seconds", timerService.getRemainingSeconds(session));
+        }
+        
+        // Debug info for FE console
+        phaseMsg.put("debug_timestamp", LocalDateTime.now().toString());
+        phaseMsg.put("debug_state", session.getState());
+        
+        phaseMsg.put("players", session.getPlayers().stream().map(p -> {
             Map<String, Object> pm = new HashMap<>();
             pm.put("user_id", p.getUserId());
-            pm.put("display_name", p.getDisplayName());
-            pm.put("color", p.getColor().toString());
+            
+            // Ẩn danh tính tương tự getGameState
+            if (session.getState() != null && session.getState() != GameState.ROLE_ASSIGN && session.getState() != GameState.GAME_OVER) {
+                pm.put("display_name", p.getColor() != null ? "Người chơi " + p.getColor().toString() : "Người chơi");
+            } else {
+                pm.put("display_name", p.getDisplayName() != null ? p.getDisplayName() : p.getUsername());
+            }
+            
+            pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
             pm.put("is_alive", p.isAlive());
             return pm;
         }).toList());
-        messagingTemplate.convertAndSend("/topic/game/" + session.getMatchId(), (Object) phaseMsg);
+        
+        messagingTemplate.convertAndSend("/topic/match/" + session.getMatchId(), (Object) phaseMsg);
     }
 
     private void broadcastDescriptions(GameSession session) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("match_id", session.getMatchId());
+        data.put("round", session.getCurrentRound());
+        data.put("all_submitted", allPlayersDescribed(session));
+        
+        // Tạo danh sách chi tiết để FE dễ render gần Avatar
+        List<Map<String, Object>> detailList = new ArrayList<>();
+        Map<String, String> rawDescs = session.getCurrentRoundDescriptions();
+        
+        for (Player p : session.getPlayers()) {
+            if (rawDescs.containsKey(p.getUserId())) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("user_id", p.getUserId());
+                item.put("content", rawDescs.get(p.getUserId()));
+                item.put("color", p.getColor() != null ? p.getColor().toString() : "red");
+                
+                // Hiển thị tên ẩn danh tương tự broadcastPhase
+                if (session.getState() != GameState.GAME_OVER) {
+                    item.put("display_name", p.getColor() != null ? "Người chơi " + p.getColor().toString() : "Người chơi");
+                } else {
+                    item.put("display_name", p.getDisplayName() != null ? p.getDisplayName() : p.getUsername());
+                }
+                
+                detailList.add(item);
+            }
+        }
+        
+        data.put("descriptions", detailList); // Gửi list chi tiết thay vì Map đơn giản
+        
         messagingTemplate.convertAndSend(
-                "/topic/game/" + session.getMatchId() + "/descriptions",
-                (Object) session.getCurrentRoundDescriptions());
+                "/topic/match/" + session.getMatchId() + "/descriptions",
+                (Object) data);
     }
 
     private void broadcastVoteCounts(GameSession session) {
+        // KHÔNG HIỂN THỊ SỐ LƯỢNG PHIẾU, CHỈ GỬI TRẠNG THÁI ĐÃ VOTE HAY CHƯA
+        Map<String, Object> voteStatus = new HashMap<>();
+        Map<String, String> currentVotes = session.getVotes().getOrDefault(session.getCurrentRound(), new HashMap<>());
+        
+        for (Player p : session.getAlivePlayers()) {
+            voteStatus.put(p.getUserId(), currentVotes.containsKey(p.getUserId()) ? 1 : 0);
+        }
+
         messagingTemplate.convertAndSend(
-                "/topic/game/" + session.getMatchId() + "/votes",
-                (Object) voteManager.getVoteCounts(session));
+                "/topic/match/" + session.getMatchId() + "/votes",
+                (Object) voteStatus);
     }
 
     private void broadcastRoundResult(GameSession session) {
@@ -779,13 +1068,18 @@ public class GameService {
         Map<String, Object> result = new HashMap<>();
         result.put("match_id", session.getMatchId());
         result.put("round", session.getCurrentRound());
+        result.put("type", "ROUND_RESULT");
+        
         if (eliminated != null) {
             result.put("eliminated_user_id", eliminated.getUserId());
-            result.put("eliminated_display_name", eliminated.getDisplayName());
-            result.put("eliminated_role", eliminated.getRole().toString());
+            // Ẩn vai trò thực sự trong thông báo, chỉ nói ai bị loại
+            result.put("eliminated_display_name", "Người chơi " + eliminated.getColor().toString());
+            result.put("message", "Người chơi " + eliminated.getColor().toString() + " đã bị loại!");
+        } else {
+            result.put("message", "Không có ai bị loại vòng này (Hòa phiếu)");
         }
         messagingTemplate.convertAndSend(
-                "/topic/game/" + session.getMatchId() + "/round-result", (Object) result);
+                "/topic/match/" + session.getMatchId() + "/round-result", (Object) result);
     }
 
     private void broadcastGameOver(GameSession session) {
@@ -809,7 +1103,7 @@ public class GameService {
             }
         }
         messagingTemplate.convertAndSend(
-                "/topic/game/" + session.getMatchId() + "/game-over", (Object) gameOver);
+                "/topic/match/" + session.getMatchId() + "/game-over", (Object) gameOver);
     }
 
     // =========================================================
@@ -845,15 +1139,33 @@ public class GameService {
     private void processEndGameRewards(GameSession session) {
         String matchId = session.getMatchId();
         WinnerRole winner = session.getWinnerRole();
+        
+        // Cập nhật Match metadata
+        matchRepository.findById(matchId).ifPresent(m -> {
+            m.setWinnerRole(winner);
+            m.setInfectedUserId(session.getInfectedUserId());
+            m.setTotalRounds(session.getCurrentRound());
+            m.setStatus(MatchStatus.finished);
+            m.setEndedAt(LocalDateTime.now());
+            matchRepository.save(m);
+        });
 
         if (winner == WinnerRole.spy) {
             // SPY THẮNG: Thưởng Spy 350, Infected 120, Last Survivor 70
-            economyService.addReward(session.getSpyUserId(), 350, Transaction.TransactionType.WIN_REWARD, "Spy Thắng Ván: " + matchId, true);
+            String spyId = session.getSpyUserId();
+            Player spyPlayer = session.getPlayer(spyId);
+            if (spyPlayer != null && !spyPlayer.isAi()) {
+                economyService.addReward(spyId, 350, Transaction.TransactionType.WIN_REWARD, "Spy Thắng Ván: " + matchId, true);
+                updateUserStats(spyId, true, PlayerRole.spy);
+                updateMatchPlayerWin(matchId, spyId);
+            }
 
             if (session.getInfectedUserId() != null) {
                 Player infected = session.getPlayer(session.getInfectedUserId());
-                if (infected != null && infected.isAlive()) {
+                if (infected != null && infected.isAlive() && !infected.isAi()) {
                     economyService.addReward(session.getInfectedUserId(), 120, Transaction.TransactionType.WIN_REWARD, "Infected Thắng Ván: " + matchId, true);
+                    updateUserStats(session.getInfectedUserId(), true, PlayerRole.civilian); // Infected là Civilian thắng cùng Spy
+                    updateMatchPlayerWin(matchId, session.getInfectedUserId());
                 }
             }
 
@@ -861,14 +1173,64 @@ public class GameService {
             session.getAlivePlayers().stream()
                 .filter(p -> !p.isAi() && !p.getUserId().equals(session.getSpyUserId()) && !p.getUserId().equals(session.getInfectedUserId()))
                 .findFirst()
-                .ifPresent(p -> economyService.addReward(p.getUserId(), 70, Transaction.TransactionType.WIN_REWARD, "Dân thường sống sót cuối cùng ván: " + matchId, true));
+                .ifPresent(p -> {
+                    economyService.addReward(p.getUserId(), 70, Transaction.TransactionType.WIN_REWARD, "Dân thường sống sót cuối cùng ván: " + matchId, true);
+                    updateUserStats(p.getUserId(), false, PlayerRole.civilian);
+                });
+            
+            // Những người khác thua (chỉ tính human)
+            session.getPlayers().stream()
+                .filter(p -> !p.isAi() && !p.getUserId().equals(spyId) && (session.getInfectedUserId() == null || !p.getUserId().equals(session.getInfectedUserId())))
+                .forEach(p -> updateUserStats(p.getUserId(), false, p.getRole()));
 
         } else if (winner == WinnerRole.civilians) {
             // DÂN THƯỜNG THẮNG: Mỗi dân thường (sống/chết) nhận 135
             session.getPlayers().stream()
                 .filter(p -> !p.isAi() && p.getRole() == PlayerRole.civilian && !p.getUserId().equals(session.getInfectedUserId()))
-                .forEach(p -> economyService.addReward(p.getUserId(), 135, Transaction.TransactionType.WIN_REWARD, "Dân thường Thắng Ván: " + matchId, true));
+                .forEach(p -> {
+                    economyService.addReward(p.getUserId(), 135, Transaction.TransactionType.WIN_REWARD, "Dân thường Thắng Ván: " + matchId, true);
+                    updateUserStats(p.getUserId(), true, PlayerRole.civilian);
+                    updateMatchPlayerWin(matchId, p.getUserId());
+                });
+            
+            // Spy và Infected thua (chỉ tính human)
+            Player spyPlayer = session.getPlayer(session.getSpyUserId());
+            if (spyPlayer != null && !spyPlayer.isAi()) {
+                updateUserStats(session.getSpyUserId(), false, PlayerRole.spy);
+            }
+            if (session.getInfectedUserId() != null) {
+                Player infected = session.getPlayer(session.getInfectedUserId());
+                if (infected != null && !infected.isAi()) {
+                    updateUserStats(session.getInfectedUserId(), false, PlayerRole.civilian);
+                }
+            }
         }
+    }
+
+    private void updateUserStats(String userId, boolean isWin, PlayerRole role) {
+        userStatsRepository.findByUserId(userId).ifPresent(stats -> {
+            stats.setTotalGames(stats.getTotalGames() + 1);
+            if (isWin) {
+                if (role == PlayerRole.spy) stats.setWinsSpy(stats.getWinsSpy() + 1);
+                else stats.setWinsCivilian(stats.getWinsCivilian() + 1);
+            }
+            if (role == PlayerRole.spy) stats.setTimesAsSpy(stats.getTimesAsSpy() + 1);
+            
+            // TODO: Cập nhật correctVotes dựa trên VoteLog (Sprint sau)
+            
+            stats.setUpdatedAt(LocalDateTime.now());
+            userStatsRepository.save(stats);
+        });
+    }
+
+    private void updateMatchPlayerWin(String matchId, String userId) {
+        matchPlayerRepository.findByMatchId(matchId).stream()
+                .filter(mp -> mp.getUserId().equals(userId))
+                .findFirst()
+                .ifPresent(mp -> {
+                    mp.setDidWin(true);
+                    matchPlayerRepository.save(mp);
+                });
     }
     // ----------------------------------------------------
 
@@ -902,5 +1264,68 @@ public class GameService {
         session.setPhaseStartTime(LocalDateTime.now());
         session.setPhaseEndTime(LocalDateTime.now().plusSeconds(300));
         broadcastPhase(session);
+    }
+
+    public void adjustRewards(String matchId, String hostId, Integer civilian, Integer spy, Integer infected) {
+        GameSession session = getSession(matchId);
+        Room room = roomRepository.findById(session.getRoomId())
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+        
+        if (!room.getHostId().equals(hostId)) {
+            throw new RuntimeException("Only host can adjust rewards");
+        }
+
+        if (civilian != null) session.setRewardCivilianGuess(civilian);
+        if (spy != null) session.setRewardSpyGuess(spy);
+        if (infected != null) session.setRewardInfectedGuess(infected);
+    }
+
+    public void adminSetSpy(String roomId, String hostId, String spyUserId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+        
+        if (!room.getHostId().equals(hostId)) {
+            throw new RuntimeException("Only host can set the spy");
+        }
+        
+        if (room.getStatus() != RoomStatus.waiting) {
+            throw new RuntimeException("Can only set spy while in waiting room");
+        }
+        
+        // Kiểm tra xem user có trong phòng không
+        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
+        boolean userInRoom = players.stream().anyMatch(rp -> rp.getUserId().equals(spyUserId));
+        if (!userInRoom) {
+            throw new RuntimeException("Selected user is not in the room");
+        }
+        
+        room.setAdminSelectedSpyId(spyUserId);
+        roomRepository.save(room);
+    }
+
+    @Profile("dev")
+    public void setGameSpyDebug(String matchId, String userId) {
+        GameSession session = getSession(matchId);
+        
+        // Reset role cho tất cả người chơi cũ
+        for (Player p : session.getPlayers()) {
+            p.setRole(PlayerRole.civilian);
+        }
+        
+        // Gán spy cho user mong muốn
+        Player spy = session.getPlayer(userId);
+        if (spy == null) throw new RuntimeException("User not found in session");
+        
+        spy.setRole(PlayerRole.spy);
+        session.setSpyUserId(userId);
+        
+        // Cập nhật Match metadata
+        matchRepository.findById(matchId).ifPresent(m -> {
+            m.setSpyUserId(userId);
+            matchRepository.save(m);
+        });
+        
+        // Gửi lại role (bí mật)
+        broadcastRoles(session);
     }
 }

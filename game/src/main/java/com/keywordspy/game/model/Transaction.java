@@ -30,6 +30,7 @@ public class Transaction {
         DAILY_CHECKIN,  // Điểm danh hàng ngày
         GUESS_BONUS,    // Thưởng đoán vai
         SKILL_BONUS,    // Thưởng kỹ năng (lừa AI/người chơi)
-        RELIEF          // Cứu trợ khi hết tiền
+        RELIEF,         // Cứu trợ khi hết tiền
+        ADMIN_ADD       // Admin tặng xu (Test)
     }
 }

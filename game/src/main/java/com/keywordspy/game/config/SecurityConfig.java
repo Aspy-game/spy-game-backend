@@ -59,10 +59,28 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        
+        // Cho phép origin từ localhost và tất cả các subdomain của ngrok
+        configuration.setAllowedOriginPatterns(List.of(
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "https://*.ngrok-free.app",
+            "https://*.ngrok-free.dev"
+        ));
+        
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        
+        // Cho phép tất cả các header cần thiết, bao gồm cả ngrok-skip-browser-warning để tránh trang cảnh báo của ngrok
+        configuration.setAllowedHeaders(List.of(
+            "Authorization",
+            "Cache-Control",
+            "Content-Type",
+            "ngrok-skip-browser-warning",
+            "X-Requested-With"
+        ));
+        
         configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L); // Cache preflight response trong 1 giờ
         
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

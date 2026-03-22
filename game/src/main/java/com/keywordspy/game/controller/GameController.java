@@ -44,6 +44,19 @@ public class GameController {
         }
     }
 
+    @PostMapping("/rooms/{roomId}/admin/set-spy")
+    public ResponseEntity<?> adminSetSpy(
+            @PathVariable String roomId,
+            @RequestBody Map<String, String> request) {
+        try {
+            User user = getCurrentUser();
+            gameService.adminSetSpy(roomId, user.getId(), request.get("user_id"));
+            return ResponseEntity.ok(Map.of("message", "Spy set successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @GetMapping("/game/{matchId}/state")
     public ResponseEntity<?> getGameState(@PathVariable String matchId) {
         try {
@@ -129,18 +142,18 @@ public class GameController {
     /**
      * POST /game/:matchId/rolecheck/confirm-ability
      * Chỉ Spy gọi trong phase ROLE_CHECK_RESULT (20s kết quả).
-     * Body: { "use_ability": true } hoặc { "use_ability": false }
-     * Response: { "confirmed": true, "ability": "fake_message" / "infection" / "none" }
+     * Body: { "ability_type": "fake_message" / "infection" / "none" }
+     * Response: { "confirmed": true, "ability": "..." }
      */
     @PostMapping("/game/{matchId}/rolecheck/confirm-ability")
     public ResponseEntity<?> confirmSpyAbility(
             @PathVariable String matchId,
-            @RequestBody Map<String, Object> request) {
+            @RequestBody Map<String, String> request) {
         try {
             User user = getCurrentUser();
-            boolean useAbility = Boolean.TRUE.equals(request.get("use_ability"));
+            String abilityType = request.get("ability_type");
             Map<String, Object> result = gameService.confirmSpyAbility(
-                    matchId, user.getId(), useAbility);
+                    matchId, user.getId(), abilityType);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -203,6 +216,33 @@ public class GameController {
                     request.get("state").toUpperCase());
             gameService.setGameState(matchId, newState);
             return ResponseEntity.ok(Map.of("message", "State changed to " + newState));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/game/{matchId}/admin/adjust-rewards")
+    public ResponseEntity<?> adjustRewards(
+            @PathVariable String matchId,
+            @RequestBody Map<String, Integer> request) {
+        try {
+            User user = getCurrentUser();
+            gameService.adjustRewards(matchId, user.getId(), 
+                    request.get("civilian"), request.get("spy"), request.get("infected"));
+            return ResponseEntity.ok(Map.of("message", "Rewards adjusted successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @Profile("dev")
+    @PostMapping("/game/{matchId}/set-spy")
+    public ResponseEntity<?> setGameSpy(
+            @PathVariable String matchId,
+            @RequestBody Map<String, String> request) {
+        try {
+            gameService.setGameSpyDebug(matchId, request.get("user_id"));
+            return ResponseEntity.ok(Map.of("message", "Spy changed to " + request.get("user_id")));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

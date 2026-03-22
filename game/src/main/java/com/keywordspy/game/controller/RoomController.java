@@ -115,6 +115,32 @@ public class RoomController {
         }
     }
 
+    // POST /api/rooms/:roomId/kick — Kick người chơi
+    @PostMapping("/{roomId}/kick")
+    public ResponseEntity<?> kickPlayer(@PathVariable String roomId, @RequestBody Map<String, String> body) {
+        try {
+            User host = getCurrentUser();
+            String targetUserId = body.get("user_id");
+            roomService.kickPlayer(roomId, host.getId(), targetUserId);
+            return ResponseEntity.ok(Map.of("message", "Player kicked"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // POST /api/rooms/:roomId/transfer-host — Nhường quyền Host
+    @PostMapping("/{roomId}/transfer-host")
+    public ResponseEntity<?> transferHost(@PathVariable String roomId, @RequestBody Map<String, String> body) {
+        try {
+            User host = getCurrentUser();
+            String newHostId = body.get("user_id");
+            roomService.transferHost(roomId, host.getId(), newHostId);
+            return ResponseEntity.ok(Map.of("message", "Host rights transferred"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     // GET /api/rooms/:roomId/players — Danh sách players trong phòng
     @GetMapping("/{roomId}/players")
     public ResponseEntity<?> getPlayers(@PathVariable String roomId) {

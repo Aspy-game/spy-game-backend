@@ -5,12 +5,16 @@ import com.keywordspy.game.model.KeywordPair;
 import com.keywordspy.game.model.Role;
 import com.keywordspy.game.model.GameSettings;
 import com.keywordspy.game.model.Room;
+import com.keywordspy.game.model.Transaction;
 import com.keywordspy.game.model.User;
 import com.keywordspy.game.repository.KeywordPairRepository;
 import com.keywordspy.game.repository.MatchRepository;
+import com.keywordspy.game.service.GameService;
 import com.keywordspy.game.service.RoomService;
 import com.keywordspy.game.service.UserService;
 import com.keywordspy.game.service.SettingsService;
+import com.keywordspy.game.service.EconomyService;
+import com.keywordspy.game.service.AiService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -22,7 +26,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/admin")
-@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("hasRole('ADMIN') or hasRole('USER')") // Cho phép USER để test
 public class AdminController {
 
     @Autowired
@@ -39,6 +43,16 @@ public class AdminController {
 
     @Autowired
     private SettingsService settingsService;
+
+    @Autowired
+    private EconomyService economyService;
+
+    @Autowired
+    private GameService gameService;
+
+    @Autowired
+    private AiService aiService;
+
     // --- 1. Quản lý người dùng (User Management) ---
     @GetMapping("/users")
     public ResponseEntity<List<User>> getAllUsers() {
@@ -80,6 +94,22 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("message", "Password reset successfully"));
     }
 
+    @PostMapping("/users/add-coins")
+    public ResponseEntity<?> addCoins(@RequestBody Map<String, Object> payload) {
+        String identifier = (String) payload.get("identifier");
+        Integer amount = (Integer) payload.get("amount");
+
+        if (identifier == null || amount == null) {
+            return ResponseEntity.badRequest().body("identifier and amount are required");
+        }
+
+        User user = userService.findByUsernameOrEmail(identifier)
+                .orElseThrow(() -> new RuntimeException("User not found: " + identifier));
+
+        economyService.addReward(user.getId(), amount, Transaction.TransactionType.ADMIN_ADD, "Admin tặng xu (Test)", false);
+        return ResponseEntity.ok(Map.of("message", "Added " + amount + " coins to " + identifier, "new_balance", user.getBalance()));
+    }
+
     // --- 2. Quản lý game / room (Game & Room Management) ---
     @GetMapping("/rooms")
     public ResponseEntity<List<Room>> getAllRooms() {
@@ -90,6 +120,38 @@ public class AdminController {
     public ResponseEntity<?> deleteRoom(@PathVariable String id) {
         roomService.deleteRoom(id);
         return ResponseEntity.ok(Map.of("message", "Room ended/deleted successfully"));
+    }
+
+    @PostMapping("/matches/{matchId}/skip-phase")
+    public ResponseEntity<?> skipPhase(@PathVariable String matchId) {
+        gameService.skipPhase(matchId);
+        return ResponseEntity.ok(Map.of("message", "Phase skipped successfully"));
+    }
+
+    @PostMapping("/ai-test")
+    public ResponseEntity<?> testAiApi(@RequestBody Map<String, String> payload) {
+        String prompt = payload.get("prompt");
+        if (prompt == null || prompt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Prompt is required");
+        }
+        
+        String response = aiService.askAi(prompt);
+        
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "prompt", prompt,
+                "response", response
+        ));
+    }
+
+    @PostMapping("/rooms/{id}/add-player")
+    public ResponseEntity<?> addPlayerToRoom(@PathVariable String id, @RequestBody Map<String, String> payload) {
+        String identifier = payload.get("identifier");
+        if (identifier == null) {
+            return ResponseEntity.badRequest().body("identifier (username or email) is required");
+        }
+        Room room = roomService.addPlayerAdmin(id, identifier);
+        return ResponseEntity.ok(room);
     }
 
     // --- 3. Theo dõi hệ thống (System Monitoring) ---
@@ -129,18 +191,7 @@ public class AdminController {
     @PatchMapping("/settings")
     public ResponseEntity<GameSettings> updateSettings(@RequestBody Map<String, Object> payload) {
         GameSettings current = settingsService.getOrDefault();
-        if (payload.containsKey("max_players")) {
-            Object v = payload.get("max_players");
-            if (v instanceof Number) current.setMaxPlayers(((Number) v).intValue());
-        }
-        if (payload.containsKey("min_players")) {
-            Object v = payload.get("min_players");
-            if (v instanceof Number) current.setMinPlayers(((Number) v).intValue());
-        }
-        if (payload.containsKey("spies_count")) {
-            Object v = payload.get("spies_count");
-            if (v instanceof Number) current.setSpiesCount(((Number) v).intValue());
-        }
+        
         if (payload.containsKey("describe_duration")) {
             Object v = payload.get("describe_duration");
             if (v instanceof Number) current.setDescribeDuration(((Number) v).intValue());

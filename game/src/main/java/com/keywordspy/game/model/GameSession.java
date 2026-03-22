@@ -90,6 +90,13 @@ public class GameSession {
     private boolean infectUsed = false;
 
     // =========================================================
+    // REWARD SETTINGS (Admin can adjust)
+    // =========================================================
+    private int rewardCivilianGuess = 20;
+    private int rewardSpyGuess = 50;
+    private int rewardInfectedGuess = 30; // Thưởng cho người bị tha hóa đoán đúng
+
+    // =========================================================
     // ROUND RESULT
     // =========================================================
     private String eliminatedUserId;

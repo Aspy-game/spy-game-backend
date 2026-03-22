@@ -25,6 +25,8 @@ public class Room {
 
     private boolean isPrivate = false;
 
+    private String adminSelectedSpyId; // ID người chơi được admin chọn làm gián điệp
+
     private LocalDateTime createdAt = LocalDateTime.now();
 
     private LocalDateTime startedAt;

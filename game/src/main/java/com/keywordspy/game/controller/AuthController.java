@@ -55,10 +55,10 @@ public class AuthController {
                     .displayName(user.getDisplayName())
                     .avatarUrl(user.getAvatarUrl())
                     .role(user.getRole())
+                    .balance(user.getBalance())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
-
                     .build();
 
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
@@ -89,6 +89,7 @@ public class AuthController {
                     .displayName(user.getDisplayName())
                     .avatarUrl(user.getAvatarUrl())
                     .role(user.getRole())
+                    .balance(user.getBalance())
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
@@ -114,8 +115,13 @@ public class AuthController {
                     
                     String accessToken = jwtService.generateAccessToken(userDetails);
                     AuthResponse response = AuthResponse.builder()
+                            .userId(user.getId())
+                            .username(user.getUsername())
+                            .displayName(user.getDisplayName())
+                            .avatarUrl(user.getAvatarUrl())
                             .accessToken(accessToken)
                             .role(user.getRole())
+                            .balance(user.getBalance())
                             .expiresIn(jwtService.getAccessTokenExpirationInSeconds())
                             .build();
                     return ResponseEntity.ok(response);
@@ -124,6 +130,29 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid refresh token");
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid refresh token");
+        }
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<?> getCurrentUser(@RequestHeader("Authorization") String authHeader) {
+        try {
+            String token = authHeader.substring(7);
+            String username = jwtService.extractUsername(token);
+            User user = userService.findByUsernameOrEmail(username)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+
+            AuthResponse response = AuthResponse.builder()
+                    .userId(user.getId())
+                    .username(user.getUsername())
+                    .displayName(user.getDisplayName())
+                    .avatarUrl(user.getAvatarUrl())
+                    .role(user.getRole())
+                    .balance(user.getBalance())
+                    .build();
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid token");
         }
     }
 
