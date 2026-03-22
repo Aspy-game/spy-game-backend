@@ -31,4 +31,6 @@ public class AuthResponse {
     private Long expiresIn;
 
     private Role role;
+
+    private Integer balance;
 }

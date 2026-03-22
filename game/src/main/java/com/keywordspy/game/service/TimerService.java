@@ -29,6 +29,8 @@ public class TimerService {
     public static final int DESCRIBE_DURATION          = 300;
     public static final int DISCUSS_DURATION           = 300;
     public static final int VOTE_DURATION              = 300;
+    public static final int VOTE_TIE_DURATION          = 10;
+    public static final int ROUND_RESULT_DURATION      = 5;
     public static final int ROLE_CHECK_DURATION        = 300;
     public static final int ROLE_CHECK_RESULT_DURATION = 300;
 
@@ -44,38 +46,67 @@ public class TimerService {
 
 
     // =========================================================
+    // GET DURATIONS
+    // =========================================================
+
+    public int getDescribeDuration() {
+        return settingsService.find().map(s -> s.getDescribeDuration() != null ? s.getDescribeDuration() : DESCRIBE_DURATION).orElse(DESCRIBE_DURATION);
+    }
+
+    public int getDiscussDuration() {
+        return settingsService.find().map(s -> s.getDiscussDuration() != null ? s.getDiscussDuration() : DISCUSS_DURATION).orElse(DISCUSS_DURATION);
+    }
+
+    public int getVoteDuration() {
+        return settingsService.find().map(s -> s.getVoteDuration() != null ? s.getVoteDuration() : VOTE_DURATION).orElse(VOTE_DURATION);
+    }
+
+    public int getRoleCheckDuration() {
+        return settingsService.find().map(s -> s.getRoleCheckDuration() != null ? s.getRoleCheckDuration() : ROLE_CHECK_DURATION).orElse(ROLE_CHECK_DURATION);
+    }
+
+    public int getRoleCheckResultDuration() {
+        return settingsService.find().map(s -> s.getRoleCheckResultDuration() != null ? s.getRoleCheckResultDuration() : ROLE_CHECK_RESULT_DURATION).orElse(ROLE_CHECK_RESULT_DURATION);
+    }
+
+    // =========================================================
     // START TIMERS
     // =========================================================
 
     public void startDescribeTimer(String matchId) {
-        int d = settingsService.find().map(s -> s.getDescribeDuration() != null ? s.getDescribeDuration() : DESCRIBE_DURATION).orElse(DESCRIBE_DURATION);
-        startTimer(matchId, d, () ->
+        startTimer(matchId, getDescribeDuration(), () ->
                 gameService.onDescribePhaseEnd(matchId));
     }
 
     public void startDiscussTimer(String matchId) {
-        int d = settingsService.find().map(s -> s.getDiscussDuration() != null ? s.getDiscussDuration() : DISCUSS_DURATION).orElse(DISCUSS_DURATION);
-        startTimer(matchId, d, () ->
+        startTimer(matchId, getDiscussDuration(), () ->
                 gameService.onDiscussPhaseEnd(matchId));
     }
 
     public void startVoteTimer(String matchId) {
-        int d = settingsService.find().map(s -> s.getVoteDuration() != null ? s.getVoteDuration() : VOTE_DURATION).orElse(VOTE_DURATION);
-        startTimer(matchId, d, () ->
+        startTimer(matchId, getVoteDuration(), () ->
                 gameService.onVotePhaseEnd(matchId));
+    }
+
+    public void startVoteTieTimer(String matchId) {
+        startTimer(matchId, VOTE_TIE_DURATION, () ->
+                gameService.onVoteTieEnd(matchId));
+    }
+
+    public void startRoundResultTimer(String matchId) {
+        startTimer(matchId, ROUND_RESULT_DURATION, () ->
+                gameService.onRoundResultEnd(matchId));
     }
 
     // Phase ROLE_CHECK: 20s tất cả đoán vai trò
     public void startRoleCheckTimer(String matchId) {
-        int d = settingsService.find().map(s -> s.getRoleCheckDuration() != null ? s.getRoleCheckDuration() : ROLE_CHECK_DURATION).orElse(ROLE_CHECK_DURATION);
-        startTimer(matchId, d, () ->
+        startTimer(matchId, getRoleCheckDuration(), () ->
                 gameService.onRoleCheckPhaseEnd(matchId));
     }
 
     // Phase ROLE_CHECK_RESULT: 20s hiện kết quả cá nhân + Spy chọn Tha Hóa
     public void startRoleCheckResultTimer(String matchId) {
-        int d = settingsService.find().map(s -> s.getRoleCheckResultDuration() != null ? s.getRoleCheckResultDuration() : ROLE_CHECK_RESULT_DURATION).orElse(ROLE_CHECK_RESULT_DURATION);
-        startTimer(matchId, d, () ->
+        startTimer(matchId, getRoleCheckResultDuration(), () ->
                 gameService.onRoleCheckResultPhaseEnd(matchId));
     }
 
@@ -98,14 +129,18 @@ public class TimerService {
         return (int) Math.max(0, remaining);
     }
 
-    private void startTimer(String matchId, int durationSeconds, Runnable onComplete) {
-        // Hủy timer cũ nếu có
-        cancelTimer(matchId);
+    public void startTimer(String matchId, int durationSeconds, Runnable onComplete) {
+        cancelTimer(matchId); // hủy timer cũ nếu có
 
 
         ScheduledFuture<?> future = scheduler.schedule(() -> {
-            activeTimers.remove(matchId);
-            onComplete.run();
+            try {
+                activeTimers.remove(matchId);
+                onComplete.run();
+            } catch (Exception e) {
+                System.err.println("[TIMER-ERROR] Error executing callback for match: " + matchId);
+                e.printStackTrace();
+            }
         }, durationSeconds, TimeUnit.SECONDS);
 
         activeTimers.put(matchId, future);

@@ -10,10 +10,6 @@ public class GameSettings {
     @Id
     private String id = "global";
 
-    private Integer maxPlayers;
-    private Integer minPlayers;
-    private Integer spiesCount;
-
     private Integer describeDuration;
     private Integer discussDuration;
     private Integer voteDuration;

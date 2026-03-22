@@ -57,7 +57,30 @@ public class GameSession {
     private boolean abilityUsed = false;
     private SpyAbility abilityType = SpyAbility.none;
 
-    // Round result
+    // Ability được mở: SpyAbility.fake_message, SpyAbility.infection, hoặc null
+    private SpyAbility abilityType = null;
+
+    // Spy chủ động từ chối dùng khả năng → biết mình là Spy nhưng không có khả năng
+    private boolean spyAbilityDeclined = false;
+
+    // Fake message đã dùng vòng này chưa — reset về false đầu mỗi vòng mới
+    // Spy được dùng mỗi vòng 1 lần, miễn AI còn sống
+    private boolean fakeMessageUsedThisRound = false;
+
+    // Spy đã Tha hóa ai chưa — chỉ được 1 lần cả ván
+    private boolean infectUsed = false;
+
+    // =========================================================
+    // REWARD SETTINGS (Admin can adjust)
+    // =========================================================
+    private int rewardCivilianGuess = 20;
+    private int rewardSpyGuess = 50;
+    private int rewardInfectedGuess = 30; // Thưởng cho người bị tha hóa đoán đúng
+
+    // =========================================================
+    // ROUND RESULT
+    // =========================================================
+
     private String eliminatedUserId;
     private WinnerRole winnerRole;
 

@@ -34,7 +34,7 @@ public class GameStateMachine {
             case VOTING:
                 return to == GameState.VOTE_TIE || to == GameState.ROUND_RESULT;
             case VOTE_TIE:
-                return to == GameState.ROUND_RESULT;
+                return to == GameState.ROLE_CHECK || to == GameState.DESCRIBING || to == GameState.ROUND_RESULT;
             case ROUND_RESULT:
                 return to == GameState.ROLE_CHECK || to == GameState.DESCRIBING || to == GameState.GAME_OVER;
             case ROLE_CHECK:

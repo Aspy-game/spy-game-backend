@@ -74,10 +74,12 @@ public class VoteManager {
         return voteCounts;
     }
 
-    // Kiểm tra tất cả player còn sống đã vote chưa
+    // Kiểm tra tất cả player còn sống đã vote chưa (AI không vote)
     public boolean allVoted(GameSession session) {
         Map<String, String> votes = session.getCurrentRoundVotes();
-        List<Player> alivePlayers = session.getAlivePlayers();
-        return votes.size() >= alivePlayers.size();
+        long humanAliveCount = session.getAlivePlayers().stream()
+                .filter(p -> !p.isAi())
+                .count();
+        return votes.size() >= humanAliveCount;
     }
 }

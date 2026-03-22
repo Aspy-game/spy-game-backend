@@ -48,13 +48,7 @@ public class RoomService {
         room.setHostId(hostUserId);
         room.setPrivate(isPrivate);
         room.setCurrentPlayers(0);
-        if (settingsService != null) {
-            settingsService.find().ifPresent(s -> {
-                if (s.getMaxPlayers() != null && s.getMaxPlayers() > 0) {
-                    room.setMaxPlayers(s.getMaxPlayers());
-                }
-            });
-        }
+        room.setMaxPlayers(6); // Mặc định 6 người chơi
         room.setStatus(RoomStatus.waiting);
         Room savedRoom = roomRepository.save(room);
 
@@ -93,6 +87,7 @@ public class RoomService {
 
         // Broadcast cập nhật lobby
         broadcastRoomUpdate(savedRoom);
+        broadcastLobbyRoomEvent(savedRoom, "UPDATED");
 
         return savedRoom;
     }
@@ -106,18 +101,100 @@ public class RoomService {
 
         room.setCurrentPlayers(Math.max(0, room.getCurrentPlayers() - 1));
 
-        // Nếu host rời → assign host mới hoặc đóng phòng
+        // Nếu không còn ai -> xóa phòng luôn
+        if (room.getCurrentPlayers() <= 0) {
+            roomRepository.deleteById(roomId);
+            broadcastLobbyRoomEvent(room, "DELETED");
+            return;
+        }
+
+        // Nếu host rời → assign host mới
         if (room.getHostId().equals(userId)) {
             List<RoomPlayer> remaining = roomPlayerRepository.findByRoomId(roomId);
-            if (remaining.isEmpty()) {
-                room.setStatus(RoomStatus.finished);
-            } else {
+            if (!remaining.isEmpty()) {
                 room.setHostId(remaining.get(0).getUserId());
             }
         }
 
         roomRepository.save(room);
         broadcastRoomUpdate(room);
+        broadcastLobbyRoomEvent(room, "UPDATED");
+    }
+
+    // Nhường quyền Host
+    public void transferHost(String roomId, String currentHostId, String newHostId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+
+        if (!room.getHostId().equals(currentHostId)) {
+            throw new RuntimeException("Only host can transfer rights");
+        }
+
+        // Kiểm tra newHost có trong phòng không
+        boolean isInRoom = roomPlayerRepository.findByRoomId(roomId).stream()
+                .anyMatch(p -> p.getUserId().equals(newHostId));
+        if (!isInRoom) {
+            throw new RuntimeException("New host must be in the room");
+        }
+
+        room.setHostId(newHostId);
+        roomRepository.save(room);
+        broadcastRoomUpdate(room);
+    }
+
+    // Kick người chơi
+    public void kickPlayer(String roomId, String hostId, String targetUserId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+
+        if (!room.getHostId().equals(hostId)) {
+            throw new RuntimeException("Only host can kick players");
+        }
+
+        if (hostId.equals(targetUserId)) {
+            throw new RuntimeException("Host cannot kick themselves");
+        }
+
+        roomPlayerRepository.deleteByRoomIdAndUserId(roomId, targetUserId);
+        room.setCurrentPlayers(Math.max(0, room.getCurrentPlayers() - 1));
+        
+        roomRepository.save(room);
+        
+        // Phát thông báo KICKED tới toàn bộ phòng để FE tự động xử lý (người bị kick sẽ so sánh ID và out)
+        Map<String, Object> kickMsg = new HashMap<>();
+        kickMsg.put("type", "PLAYER_KICKED");
+        kickMsg.put("room_id", roomId);
+        kickMsg.put("target_user_id", targetUserId);
+        messagingTemplate.convertAndSend("/topic/room/" + roomId, (Object) kickMsg);
+
+        broadcastRoomUpdate(room);
+        broadcastLobbyRoomEvent(room, "UPDATED");
+    }
+
+    // Admin add player (for test)
+    public Room addPlayerAdmin(String roomId, String identifier) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+        
+        User user = userRepository.findByUsername(identifier)
+                .or(() -> userRepository.findByEmail(identifier))
+                .orElseThrow(() -> new RuntimeException("User not found with username/email: " + identifier));
+
+        String targetUserId = user.getId();
+
+        // Kiểm tra xem đã có trong phòng chưa
+        boolean alreadyIn = roomPlayerRepository.findByRoomId(roomId).stream()
+                .anyMatch(p -> p.getUserId().equals(targetUserId));
+        
+        if (!alreadyIn) {
+            addPlayerToRoom(roomId, user);
+            room.setCurrentPlayers(room.getCurrentPlayers() + 1);
+            roomRepository.save(room);
+        }
+
+        broadcastRoomUpdate(room);
+        broadcastLobbyRoomEvent(room, "UPDATED");
+        return room;
     }
 
     // Danh sách phòng công khai đang chờ
@@ -146,8 +223,10 @@ public class RoomService {
         RoomPlayer rp = new RoomPlayer();
         rp.setRoomId(roomId);
         rp.setUserId(user.getId());
-        rp.setUsername(user.getUsername());
-        rp.setDisplayName(user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
+        // Username dùng cho WebSocket private phải khớp với Principal name trong Spring Security
+        String wsUsername = user.getUsername() != null ? user.getUsername() : user.getEmail();
+        rp.setUsername(wsUsername);
+        rp.setDisplayName(user.getDisplayName() != null ? user.getDisplayName() : wsUsername);
         roomPlayerRepository.save(rp);
     }
 
@@ -191,7 +270,9 @@ public class RoomService {
     }
 
     public void deleteRoom(String roomId) {
+        Optional<Room> before = roomRepository.findById(roomId);
         roomRepository.deleteById(roomId);
+        before.ifPresent(r -> broadcastLobbyRoomEvent(r, "DELETED"));
     }
 
 
@@ -297,5 +378,17 @@ public class RoomService {
 
         messagingTemplate.convertAndSend("/topic/room/" + room.getId(), (Object) update);
 
+    }
+
+    private void broadcastLobbyRoomEvent(Room room, String type) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "ROOM_" + type);
+        payload.put("room_id", room.getId());
+        payload.put("room_code", room.getRoomCode());
+        payload.put("current_players", room.getCurrentPlayers());
+        payload.put("max_players", room.getMaxPlayers());
+        payload.put("status", room.getStatus().toString());
+        payload.put("is_private", room.isPrivate());
+        messagingTemplate.convertAndSend("/topic/rooms/lobby", (Object) payload);
     }
 }
