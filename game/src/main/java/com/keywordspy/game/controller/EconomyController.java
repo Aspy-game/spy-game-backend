@@ -40,12 +40,27 @@ public class EconomyController {
         return ResponseEntity.ok(response);
     }
 
+    // GET /api/economy/daily-checkin/status - Kiểm tra trạng thái điểm danh hôm nay
+    @GetMapping("/daily-checkin/status")
+    public ResponseEntity<?> getCheckinStatus(Authentication auth) {
+        User user = getCurrentUser(auth);
+        boolean alreadyCheckedIn = economyService.hasCheckedInToday(user.getId());
+        Map<String, Object> response = new HashMap<>();
+        response.put("canCheckin", !alreadyCheckedIn);
+        response.put("todayReward", 200);
+        return ResponseEntity.ok(response);
+    }
+
     // POST /api/economy/daily-checkin - Điểm danh nhận 200 xu
     @PostMapping("/daily-checkin")
     public ResponseEntity<?> dailyCheckin(Authentication auth) {
-        User user = getCurrentUser(auth);
-        economyService.dailyCheckin(user.getId());
-        return ResponseEntity.ok(Map.of("message", "Điểm danh thành công! +200 xu"));
+        try {
+            User user = getCurrentUser(auth);
+            economyService.dailyCheckin(user.getId());
+            return ResponseEntity.ok(Map.of("message", "Điểm danh thành công! +200 xu"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     // POST /api/economy/relief - Nhận cứu trợ 50 xu (khi balance < 10)

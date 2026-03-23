@@ -4,6 +4,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import lombok.Data;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Data
@@ -31,6 +32,7 @@ public class User {
     // --- ECONOMY SYSTEM ---
     private int balance = 500; // Mặc định tặng 500 xu cho người chơi mới
     private int rankingPoints = 0; // Điểm xếp hạng trọn đời (chỉ tăng không giảm)
+    private LocalDate lastCheckinDate; // Ngày điểm danh gần nhất
     // ----------------------
 
     private LocalDateTime createdAt = LocalDateTime.now();

@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -79,12 +80,32 @@ public class EconomyService {
     }
 
     /**
-     * Điểm danh hàng ngày
+     * Kiểm tra xem user đã điểm danh hôm nay chưa
+     */
+    public boolean hasCheckedInToday(String userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found: " + userId));
+        return user.getLastCheckinDate() != null && user.getLastCheckinDate().equals(LocalDate.now());
+    }
+
+    /**
+     * Điểm danh hàng ngày - kiểm tra trùng ngày
      */
     @Transactional
     public void dailyCheckin(String userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found: " + userId));
+
+        if (user.getLastCheckinDate() != null && user.getLastCheckinDate().equals(LocalDate.now())) {
+            throw new RuntimeException("Bạn đã điểm danh hôm nay rồi!");
+        }
+
         int checkinAmount = 200;
-        addReward(userId, checkinAmount, Transaction.TransactionType.DAILY_CHECKIN, "Điểm danh hàng ngày", false);
+        user.setBalance(user.getBalance() + checkinAmount);
+        user.setLastCheckinDate(LocalDate.now());
+        userRepository.save(user);
+
+        logTransaction(userId, checkinAmount, Transaction.TransactionType.DAILY_CHECKIN, "Điểm danh hàng ngày +200 xu");
     }
 
     /**
