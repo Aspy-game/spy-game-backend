@@ -74,6 +74,7 @@ public class GameService {
         GameSession session = new GameSession();
         session.setMatchId(savedMatch.getId());
         session.setRoomId(roomId);
+        session.setRoomCode(room.getRoomCode());
         session.setCivilianKeyword(keyword.getCivilianKeyword());
         session.setSpyKeyword(keyword.getSpyKeyword());
         session.setKeywordPairId(keyword.getId());
@@ -251,10 +252,13 @@ public class GameService {
 
         Map<String, Object> chatMsg = new HashMap<>();
         chatMsg.put("user_id", userId);
-        chatMsg.put("display_name", player.getDisplayName() != null ? player.getDisplayName() : player.getUsername());
+        String name = (session.getState() != null && session.getState() != GameState.GAME_OVER) 
+                ? getAnonymousName(player) 
+                : (player.getDisplayName() != null ? player.getDisplayName() : player.getUsername());
+        chatMsg.put("display_name", name);
         chatMsg.put("color", player.getColor() != null ? player.getColor().toString() : "red");
         chatMsg.put("content", content);
-        chatMsg.put("sender", chatMsg.get("display_name"));
+        chatMsg.put("sender", name);
         chatMsg.put("sent_at", LocalDateTime.now().toString());
         messagingTemplate.convertAndSend("/topic/match/" + matchId + "/chat", (Object) chatMsg);
 
@@ -361,6 +365,7 @@ public class GameService {
                     result.put("reward_coins", true);
                     
                     int reward = player.isInfected() ? session.getRewardInfectedGuess() : session.getRewardCivilianGuess();
+                    result.put("reward_amount", reward);
                     
                     // --- ECONOMY SYSTEM: Thưởng đoán đúng vai ---
                     economyService.addReward(uid, reward, Transaction.TransactionType.GUESS_BONUS, "Đoán đúng vai " + displayRole, true);
@@ -378,6 +383,7 @@ public class GameService {
                     session.setSpyKnowsRole(true);
                     result.put("message", "Chính xác! Bạn là Gián Điệp");
                     result.put("reward_coins", true); 
+                    result.put("reward_amount", session.getRewardSpyGuess());
                     
                     // --- ECONOMY SYSTEM: Thưởng Spy đoán đúng vai ---
                     economyService.addReward(uid, session.getRewardSpyGuess(), Transaction.TransactionType.GUESS_BONUS, "Spy đoán đúng vai", true);
@@ -477,8 +483,8 @@ public class GameService {
 
         // Broadcast như tin của AI — FE không biết là fake
         Map<String, Object> fakeMsg = new HashMap<>();
-        fakeMsg.put("user_id", aiPlayer.getUserId());
-        fakeMsg.put("display_name", "Người chơi " + aiPlayer.getColor().toString());
+        fakeMsg.put("match_id", matchId);
+        fakeMsg.put("display_name", getAnonymousName(aiPlayer));
         fakeMsg.put("color", aiPlayer.getColor().toString());
         fakeMsg.put("content", content);
         fakeMsg.put("sent_at", LocalDateTime.now().toString());
@@ -847,10 +853,10 @@ public class GameService {
             
             Map<String, Object> aiMsg = new HashMap<>();
             aiMsg.put("user_id", ai.getUserId());
-            aiMsg.put("display_name", ai.getDisplayName());
+            aiMsg.put("display_name", getAnonymousName(ai));
             aiMsg.put("color", ai.getColor().toString());
             aiMsg.put("content", content);
-            aiMsg.put("sender", ai.getDisplayName());
+            aiMsg.put("sender", getAnonymousName(ai));
             aiMsg.put("sent_at", LocalDateTime.now().toString());
             
             messagingTemplate.convertAndSend("/topic/match/" + session.getMatchId() + "/chat", (Object) aiMsg);
@@ -867,6 +873,7 @@ public class GameService {
         Player player = session.getPlayer(userId);
 
         Map<String, Object> state = new HashMap<>();
+        state.put("room_code", getRoomCode(session));
         state.put("match_id", matchId);
         state.put("round", session.getCurrentRound());
         state.put("phase", session.getState() != null ? session.getState().toString() : "WAITING");
@@ -881,8 +888,8 @@ public class GameService {
             pm.put("user_id", p.getUserId());
             
             // Nếu game đã bắt đầu (sau giai đoạn WAITING), ẩn danh tính
-            if (session.getState() != null && session.getState() != GameState.ROLE_ASSIGN && session.getState() != GameState.GAME_OVER) {
-                pm.put("display_name", p.getColor() != null ? "Người chơi " + p.getColor().toString() : "Người chơi");
+            if (session.getState() != null && session.getState() != GameState.GAME_OVER) {
+                pm.put("display_name", getAnonymousName(p));
             } else {
                 pm.put("display_name", p.getDisplayName() != null ? p.getDisplayName() : p.getUsername());
             }
@@ -983,6 +990,7 @@ public class GameService {
 
     private void broadcastPhase(GameSession session) {
         Map<String, Object> phaseMsg = new HashMap<>();
+        phaseMsg.put("room_code", getRoomCode(session));
         phaseMsg.put("match_id", session.getMatchId());
         phaseMsg.put("phase", session.getState() != null ? session.getState().toString() : "WAITING");
         phaseMsg.put("round", session.getCurrentRound());
@@ -1000,8 +1008,8 @@ public class GameService {
             pm.put("user_id", p.getUserId());
             
             // Ẩn danh tính tương tự getGameState
-            if (session.getState() != null && session.getState() != GameState.ROLE_ASSIGN && session.getState() != GameState.GAME_OVER) {
-                pm.put("display_name", p.getColor() != null ? "Người chơi " + p.getColor().toString() : "Người chơi");
+            if (session.getState() != null && session.getState() != GameState.GAME_OVER) {
+                pm.put("display_name", getAnonymousName(p));
             } else {
                 pm.put("display_name", p.getDisplayName() != null ? p.getDisplayName() : p.getUsername());
             }
@@ -1033,7 +1041,7 @@ public class GameService {
                 
                 // Hiển thị tên ẩn danh tương tự broadcastPhase
                 if (session.getState() != GameState.GAME_OVER) {
-                    item.put("display_name", p.getColor() != null ? "Người chơi " + p.getColor().toString() : "Người chơi");
+                    item.put("display_name", getAnonymousName(p));
                 } else {
                     item.put("display_name", p.getDisplayName() != null ? p.getDisplayName() : p.getUsername());
                 }
@@ -1109,6 +1117,35 @@ public class GameService {
     // =========================================================
     // SECTION 10: PRIVATE HELPERS
     // =========================================================
+
+    private String getAnonymousName(Player p) {
+        if (p.getColor() == null) return "Ẩn danh";
+        String color = p.getColor().toString().toLowerCase();
+        return switch (color) {
+            case "red" -> "Mèo Béo";
+            case "blue" -> "Cún Con";
+            case "green" -> "Gấu Trúc";
+            case "yellow" -> "Vịt Vàng";
+            case "purple" -> "Cáo Nhỏ";
+            case "orange" -> "Hổ Con";
+            case "pink" -> "Thỏ Ngọc";
+            case "cyan" -> "Chim Cánh Cụt";
+            case "brown" -> "Sóc Chuột";
+            case "gray" -> "Voi Con";
+            case "white" -> "Ngựa Vằn";
+            case "black" -> "Cá Heo";
+            default -> "Người chơi " + p.getColor().toString();
+        };
+    }
+
+    private String getRoomCode(GameSession session) {
+        if (session.getRoomCode() == null && session.getRoomId() != null) {
+            roomRepository.findById(session.getRoomId()).ifPresent(r -> {
+                session.setRoomCode(r.getRoomCode());
+            });
+        }
+        return session.getRoomCode();
+    }
 
     private Player getAlivePlayer(GameSession session, String userId) {
         Player player = session.getPlayer(userId);
@@ -1246,7 +1283,7 @@ public class GameService {
                 .map(p -> {
                     Map<String, Object> m = new HashMap<>();
                     m.put("user_id", p.getUserId());
-                    m.put("display_name", p.getDisplayName());
+                    m.put("display_name", getAnonymousName(p));
                     m.put("color", p.getColor().toString());
                     return m;
                 }).toList();
