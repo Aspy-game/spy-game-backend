@@ -13,4 +13,5 @@ public class Player {
     private boolean isAlive = true;
     private int eliminatedRound = -1;
     private boolean isAi = false;
+    private int scoreGained = 0;
 }
