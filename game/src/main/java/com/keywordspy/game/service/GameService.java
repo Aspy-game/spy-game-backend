@@ -290,10 +290,10 @@ public class GameService {
         currentVotes.put(voterId, targetId);
         broadcastVoteCounts(session);
 
-        if (voteManager.allVoted(session)) {
-            timerService.cancelTimer(matchId);
-            processVoteResult(session);
-        }
+        // if (voteManager.allVoted(session)) {
+        //     timerService.cancelTimer(matchId);
+        //     processVoteResult(session);
+        // }
     }
 
     // =========================================================
