@@ -621,6 +621,7 @@ public class GameService {
         if (spy != null && !spy.isAlive()) {
             session.setWinnerRole(WinnerRole.civilians);
             stateMachine.transition(session, GameState.GAME_OVER);
+            broadcastPhase(session); // Gửi tên thật cho Frontend
             broadcastGameOver(session);
             return;
         }
@@ -635,6 +636,7 @@ public class GameService {
         if (aliveCivilians <= 1) {
             session.setWinnerRole(WinnerRole.spy);
             stateMachine.transition(session, GameState.GAME_OVER);
+            broadcastPhase(session); // Gửi tên thật cho Frontend
             broadcastGameOver(session);
             return;
         }
