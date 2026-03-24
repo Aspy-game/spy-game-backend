@@ -237,10 +237,10 @@ public class GameService {
             }
         }
 
-        if (allPlayersDescribed(session)) {
-            timerService.cancelTimer(matchId);
-            moveToDiscussing(session);
-        }
+        // if (allPlayersDescribed(session)) {
+        //     timerService.cancelTimer(matchId);
+        //     moveToDiscussing(session);
+        // }
     }
 
     public void submitChat(String matchId, String userId, String content) {
