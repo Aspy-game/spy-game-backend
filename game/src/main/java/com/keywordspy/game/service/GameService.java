@@ -627,8 +627,9 @@ public class GameService {
 
         // Civilians (không kể Spy) còn 1 → Spy thắng
         // Logic mới: tính cả người bị tha hóa (infected) thuộc phe Spy
+        // KHÔNG tính AI vào số lượng dân thường thật sự (vì Gián điệp thao túng được AI)
         long aliveCivilians = session.getAlivePlayers().stream()
-                .filter(p -> p.getRole() == PlayerRole.civilian && !p.isInfected())
+                .filter(p -> p.getRole() == PlayerRole.civilian && !p.isInfected() && !p.isAi())
                 .count();
         
         if (aliveCivilians <= 1) {
