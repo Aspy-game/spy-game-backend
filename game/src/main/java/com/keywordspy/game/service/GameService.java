@@ -53,8 +53,8 @@ public class GameService {
         if (room.getCurrentPlayers() < 2)
             throw new RuntimeException("Need at least 2 players to start");
 
-        // --- ECONOMY SYSTEM: Thu phí vào cửa (Entry Fee: 10 xu) ---
-        int entryFee = 10;
+        // --- ECONOMY SYSTEM: Thu phí vào cửa (Entry Fee: 0 xu để phù hợp với hiển thị Game Over) ---
+        int entryFee = 0;
         List<RoomPlayer> roomPlayers = roomPlayerRepository.findByRoomId(room.getId());
         for (RoomPlayer rp : roomPlayers) {
             economyService.deductEntryFee(rp.getUserId(), entryFee);
@@ -237,10 +237,10 @@ public class GameService {
             }
         }
 
-        if (allPlayersDescribed(session)) {
-            timerService.cancelTimer(matchId);
-            moveToDiscussing(session);
-        }
+        // if (allPlayersDescribed(session)) {
+        //     timerService.cancelTimer(matchId);
+        //     moveToDiscussing(session);
+        // }
     }
 
     public void submitChat(String matchId, String userId, String content) {
@@ -276,6 +276,9 @@ public class GameService {
         if (session.getState() != GameState.VOTING) {
             return; // Tránh lỗi khi phase đã chuyển đổi nhanh
         }
+        
+        // Ngăn chặn người đã chết vote
+        getAlivePlayer(session, voterId);
 
         Map<String, String> currentVotes = session.getVotes()
                 .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
@@ -287,10 +290,10 @@ public class GameService {
         currentVotes.put(voterId, targetId);
         broadcastVoteCounts(session);
 
-        if (voteManager.allVoted(session)) {
-            timerService.cancelTimer(matchId);
-            processVoteResult(session);
-        }
+        // if (voteManager.allVoted(session)) {
+        //     timerService.cancelTimer(matchId);
+        //     processVoteResult(session);
+        // }
     }
 
     // =========================================================
@@ -619,19 +622,22 @@ public class GameService {
             session.setWinnerRole(WinnerRole.civilians);
             stateMachine.transition(session, GameState.GAME_OVER);
             broadcastGameOver(session);
+            broadcastPhase(session); // Gửi tên thật + xu thưởng cho Frontend
             return;
         }
 
         // Civilians (không kể Spy) còn 1 → Spy thắng
         // Logic mới: tính cả người bị tha hóa (infected) thuộc phe Spy
+        // KHÔNG tính AI vào số lượng dân thường thật sự (vì Gián điệp thao túng được AI)
         long aliveCivilians = session.getAlivePlayers().stream()
-                .filter(p -> p.getRole() == PlayerRole.civilian && !p.isInfected())
+                .filter(p -> p.getRole() == PlayerRole.civilian && !p.isInfected() && !p.isAi())
                 .count();
         
         if (aliveCivilians <= 1) {
             session.setWinnerRole(WinnerRole.spy);
             stateMachine.transition(session, GameState.GAME_OVER);
             broadcastGameOver(session);
+            broadcastPhase(session); // Gửi tên thật + xu thưởng cho Frontend
             return;
         }
 
@@ -1016,6 +1022,7 @@ public class GameService {
             
             pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
             pm.put("is_alive", p.isAlive());
+            pm.put("score_gained", p.getScoreGained()); // Dữ liệu xu thưởng cho bảng game over
             return pm;
         }).toList());
         
@@ -1188,57 +1195,72 @@ public class GameService {
         });
 
         if (winner == WinnerRole.spy) {
-            // SPY THẮNG: Thưởng Spy 350, Infected 120, Last Survivor 70
+            // SPY THẮNG: Thưởng Spy 25, Infected 25
             String spyId = session.getSpyUserId();
             Player spyPlayer = session.getPlayer(spyId);
-            if (spyPlayer != null && !spyPlayer.isAi()) {
-                economyService.addReward(spyId, 350, Transaction.TransactionType.WIN_REWARD, "Spy Thắng Ván: " + matchId, true);
-                updateUserStats(spyId, true, PlayerRole.spy);
-                updateMatchPlayerWin(matchId, spyId);
-            }
-
-            if (session.getInfectedUserId() != null) {
-                Player infected = session.getPlayer(session.getInfectedUserId());
-                if (infected != null && infected.isAlive() && !infected.isAi()) {
-                    economyService.addReward(session.getInfectedUserId(), 120, Transaction.TransactionType.WIN_REWARD, "Infected Thắng Ván: " + matchId, true);
-                    updateUserStats(session.getInfectedUserId(), true, PlayerRole.civilian); // Infected là Civilian thắng cùng Spy
-                    updateMatchPlayerWin(matchId, session.getInfectedUserId());
+            if (spyPlayer != null) {
+                spyPlayer.setScoreGained(25);
+                if (!spyPlayer.isAi()) {
+                    economyService.addReward(spyId, 25, Transaction.TransactionType.WIN_REWARD, "Spy Thắng Ván: " + matchId, true);
+                    updateUserStats(spyId, true, PlayerRole.spy);
+                    updateMatchPlayerWin(matchId, spyId);
                 }
             }
 
-            // Dân thường sống sót cuối cùng (không tính spy/infected)
-            session.getAlivePlayers().stream()
-                .filter(p -> !p.isAi() && !p.getUserId().equals(session.getSpyUserId()) && !p.getUserId().equals(session.getInfectedUserId()))
-                .findFirst()
-                .ifPresent(p -> {
-                    economyService.addReward(p.getUserId(), 70, Transaction.TransactionType.WIN_REWARD, "Dân thường sống sót cuối cùng ván: " + matchId, true);
-                    updateUserStats(p.getUserId(), false, PlayerRole.civilian);
-                });
-            
-            // Những người khác thua (chỉ tính human)
-            session.getPlayers().stream()
-                .filter(p -> !p.isAi() && !p.getUserId().equals(spyId) && (session.getInfectedUserId() == null || !p.getUserId().equals(session.getInfectedUserId())))
-                .forEach(p -> updateUserStats(p.getUserId(), false, p.getRole()));
-
-        } else if (winner == WinnerRole.civilians) {
-            // DÂN THƯỜNG THẮNG: Mỗi dân thường (sống/chết) nhận 135
-            session.getPlayers().stream()
-                .filter(p -> !p.isAi() && p.getRole() == PlayerRole.civilian && !p.getUserId().equals(session.getInfectedUserId()))
-                .forEach(p -> {
-                    economyService.addReward(p.getUserId(), 135, Transaction.TransactionType.WIN_REWARD, "Dân thường Thắng Ván: " + matchId, true);
-                    updateUserStats(p.getUserId(), true, PlayerRole.civilian);
-                    updateMatchPlayerWin(matchId, p.getUserId());
-                });
-            
-            // Spy và Infected thua (chỉ tính human)
-            Player spyPlayer = session.getPlayer(session.getSpyUserId());
-            if (spyPlayer != null && !spyPlayer.isAi()) {
-                updateUserStats(session.getSpyUserId(), false, PlayerRole.spy);
-            }
             if (session.getInfectedUserId() != null) {
                 Player infected = session.getPlayer(session.getInfectedUserId());
-                if (infected != null && !infected.isAi()) {
-                    updateUserStats(session.getInfectedUserId(), false, PlayerRole.civilian);
+                if (infected != null) {
+                    infected.setScoreGained(25);
+                    if (infected.isAlive() && !infected.isAi()) {
+                        economyService.addReward(session.getInfectedUserId(), 25, Transaction.TransactionType.WIN_REWARD, "Infected Thắng Ván: " + matchId, true);
+                        updateUserStats(session.getInfectedUserId(), true, PlayerRole.civilian);
+                        updateMatchPlayerWin(matchId, session.getInfectedUserId());
+                    }
+                }
+            }
+
+            // Những người khác thua (-5 xu)
+            session.getPlayers().stream()
+                .filter(p -> !p.getUserId().equals(spyId) && (session.getInfectedUserId() == null || !p.getUserId().equals(session.getInfectedUserId())))
+                .forEach(p -> {
+                    p.setScoreGained(-5);
+                    if (!p.isAi()) {
+                        economyService.addReward(p.getUserId(), -5, Transaction.TransactionType.WIN_REWARD, "Thua ván: " + matchId, false);
+                        updateUserStats(p.getUserId(), false, p.getRole());
+                    }
+                });
+
+        } else if (winner == WinnerRole.civilians) {
+            // DÂN THƯỜNG THẮNG: Mỗi dân thường (sống/chết) nhận 15
+            session.getPlayers().stream()
+                .filter(p -> p.getRole() == PlayerRole.civilian && !p.getUserId().equals(session.getInfectedUserId()))
+                .forEach(p -> {
+                    p.setScoreGained(15);
+                    if (!p.isAi()) {
+                        economyService.addReward(p.getUserId(), 15, Transaction.TransactionType.WIN_REWARD, "Dân thường Thắng Ván: " + matchId, true);
+                        updateUserStats(p.getUserId(), true, PlayerRole.civilian);
+                        updateMatchPlayerWin(matchId, p.getUserId());
+                    }
+                });
+            
+            // Spy và Infected thua (-5 xu)
+            Player spyPlayer = session.getPlayer(session.getSpyUserId());
+            if (spyPlayer != null) {
+                spyPlayer.setScoreGained(-5);
+                if (!spyPlayer.isAi()) {
+                    economyService.addReward(session.getSpyUserId(), -5, Transaction.TransactionType.WIN_REWARD, "Thua ván: " + matchId, false);
+                    updateUserStats(session.getSpyUserId(), false, PlayerRole.spy);
+                }
+            }
+
+            if (session.getInfectedUserId() != null) {
+                Player infected = session.getPlayer(session.getInfectedUserId());
+                if (infected != null) {
+                    infected.setScoreGained(-5);
+                    if (!infected.isAi()) {
+                        economyService.addReward(session.getInfectedUserId(), -5, Transaction.TransactionType.WIN_REWARD, "Thua ván: " + matchId, false);
+                        updateUserStats(session.getInfectedUserId(), false, PlayerRole.civilian);
+                    }
                 }
             }
         }
