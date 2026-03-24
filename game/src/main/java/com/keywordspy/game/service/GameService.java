@@ -276,6 +276,9 @@ public class GameService {
         if (session.getState() != GameState.VOTING) {
             return; // Tránh lỗi khi phase đã chuyển đổi nhanh
         }
+        
+        // Ngăn chặn người đã chết vote
+        getAlivePlayer(session, voterId);
 
         Map<String, String> currentVotes = session.getVotes()
                 .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
