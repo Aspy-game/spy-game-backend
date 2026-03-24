@@ -15,6 +15,7 @@ public class GameSession {
     // =========================================================
     private String matchId;
     private String roomId;
+    private String roomCode;
 
     // =========================================================
     // GAME STATE
