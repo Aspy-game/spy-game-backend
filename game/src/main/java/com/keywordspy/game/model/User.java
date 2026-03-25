@@ -36,5 +36,10 @@ public class User {
     private int checkinStreak = 0; // Số ngày điểm danh liên tiếp (1-7)
     // ----------------------
 
+    // --- FORGOT PASSWORD ---
+    private String resetToken;
+    private LocalDateTime resetTokenExpiry;
+    // ----------------------
+
     private LocalDateTime createdAt = LocalDateTime.now();
 }
