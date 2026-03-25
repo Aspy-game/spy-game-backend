@@ -10,6 +10,8 @@ public class RegisterRequest {
     private String username;
     private String email;
     private String password;
+    @JsonProperty("confirm_password")
+    private String confirmPassword;
     @JsonProperty("display_name")
     private String displayName;
 }

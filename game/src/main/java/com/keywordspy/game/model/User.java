@@ -35,5 +35,10 @@ public class User {
     private LocalDate lastCheckinDate; // Ngày điểm danh gần nhất
     // ----------------------
 
+    // --- FORGOT PASSWORD ---
+    private String resetToken;
+    private LocalDateTime resetTokenExpiry;
+    // ----------------------
+
     private LocalDateTime createdAt = LocalDateTime.now();
 }
