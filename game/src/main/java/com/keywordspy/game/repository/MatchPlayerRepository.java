@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface MatchPlayerRepository extends MongoRepository<MatchPlayer, String> {
     List<MatchPlayer> findByMatchId(String matchId);
+    List<MatchPlayer> findTop20ByUserIdOrderByIdDesc(String userId);
 }

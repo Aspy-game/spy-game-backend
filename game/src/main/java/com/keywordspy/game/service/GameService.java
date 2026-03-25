@@ -941,6 +941,24 @@ public class GameService {
             }
         }
 
+        // THÊM: Gửi kèm kết quả vòng chơi nếu đang ở phase ROUND_RESULT hoặc VOTE_TIE
+        if (session.getState() == GameState.ROUND_RESULT || session.getState() == GameState.VOTE_TIE) {
+            Map<String, Object> eliminatedResult = new HashMap<>();
+            eliminatedResult.put("round", session.getCurrentRound());
+            eliminatedResult.put("type", "ROUND_RESULT");
+
+            Player eliminated = session.getPlayer(session.getEliminatedUserId());
+            if (eliminated != null) {
+                eliminatedResult.put("eliminated_user_id", eliminated.getUserId());
+                eliminatedResult.put("eliminated_display_name", getAnonymousName(eliminated));
+                eliminatedResult.put("color", eliminated.getColor().toString());
+                eliminatedResult.put("message", getAnonymousName(eliminated) + " đã bị loại!");
+            } else {
+                eliminatedResult.put("message", "Không có ai bị loại vòng này (Hòa phiếu)");
+            }
+            state.put("eliminated_result", eliminatedResult);
+        }
+
         return state;
     }
 

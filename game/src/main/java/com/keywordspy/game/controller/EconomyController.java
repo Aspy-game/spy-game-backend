@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +48,20 @@ public class EconomyController {
         boolean alreadyCheckedIn = economyService.hasCheckedInToday(user.getId());
         Map<String, Object> response = new HashMap<>();
         response.put("canCheckin", !alreadyCheckedIn);
-        response.put("todayReward", 200);
+        
+        int currentStreak = user.getCheckinStreak();
+        // Tính toán phần thưởng dự kiến cho ngày tiếp theo (hoặc ngày hôm nay nếu chưa nhận)
+        int nextStreak = alreadyCheckedIn ? (currentStreak % 7) + 1 : (currentStreak == 0 ? 1 : currentStreak);
+        
+        // Cần kiểm tra xem có bị đứt chuỗi không để hiển thị đúng streak cho FE
+        LocalDate today = LocalDate.now();
+        if (!alreadyCheckedIn && user.getLastCheckinDate() != null && !user.getLastCheckinDate().plusDays(1).equals(today)) {
+            nextStreak = 1;
+        }
+
+        int[] rewards = {10, 10, 10, 10, 20, 20, 30};
+        response.put("streak", alreadyCheckedIn ? currentStreak : nextStreak);
+        response.put("todayReward", rewards[(alreadyCheckedIn ? currentStreak : nextStreak) - 1]);
         return ResponseEntity.ok(response);
     }
 
@@ -56,8 +70,12 @@ public class EconomyController {
     public ResponseEntity<?> dailyCheckin(Authentication auth) {
         try {
             User user = getCurrentUser(auth);
-            economyService.dailyCheckin(user.getId());
-            return ResponseEntity.ok(Map.of("message", "Điểm danh thành công! +200 xu"));
+            Map<String, Object> result = economyService.dailyCheckin(user.getId());
+            return ResponseEntity.ok(Map.of(
+                "message", "Điểm danh thành công! +" + result.get("amount") + " xu",
+                "amount", result.get("amount"),
+                "streak", result.get("streak")
+            ));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -75,19 +93,10 @@ public class EconomyController {
         }
     }
 
-    // GET /api/economy/leaderboard - Bảng xếp hạng
+    // GET /api/economy/leaderboard - Bảng xếp hạng đa tab
     @GetMapping("/leaderboard")
-    public ResponseEntity<?> getLeaderboard() {
-        List<User> topUsers = economyService.getLeaderboard();
-        List<Map<String, Object>> response = topUsers.stream().map(u -> {
-            Map<String, Object> m = new HashMap<>();
-            m.put("username", u.getUsername());
-            m.put("display_name", u.getDisplayName());
-            m.put("ranking_points", u.getRankingPoints());
-            m.put("rank_tier", calculateRankTier(u.getRankingPoints()));
-            return m;
-        }).collect(Collectors.toList());
-        return ResponseEntity.ok(response);
+    public ResponseEntity<?> getLeaderboard(@RequestParam(defaultValue = "balance") String type) {
+        return ResponseEntity.ok(economyService.getLeaderboard(type));
     }
 
     // GET /api/economy/transactions - Lịch sử giao dịch

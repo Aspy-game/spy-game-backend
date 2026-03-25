@@ -1,9 +1,12 @@
 package com.keywordspy.game.service;
-
+import java.util.Map;
+import java.util.HashMap;
+import java.util.List;
 import com.keywordspy.game.model.Transaction;
 import com.keywordspy.game.model.User;
 import com.keywordspy.game.repository.TransactionRepository;
 import com.keywordspy.game.repository.UserRepository;
+import com.keywordspy.game.repository.UserStatsRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,6 +24,7 @@ public class EconomyService {
 
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
+    private final UserStatsRepository userStatsRepository;
 
     // --- ECONOMY SYSTEM LOGIC ---
 
@@ -92,29 +96,81 @@ public class EconomyService {
      * Điểm danh hàng ngày - kiểm tra trùng ngày
      */
     @Transactional
-    public void dailyCheckin(String userId) {
+    public Map<String, Object> dailyCheckin(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found: " + userId));
 
-        if (user.getLastCheckinDate() != null && user.getLastCheckinDate().equals(LocalDate.now())) {
+        LocalDate today = LocalDate.now();
+        if (user.getLastCheckinDate() != null && user.getLastCheckinDate().equals(today)) {
             throw new RuntimeException("Bạn đã điểm danh hôm nay rồi!");
         }
 
-        int checkinAmount = 200;
+        // Tính toán streak
+        int newStreak = 1;
+        if (user.getLastCheckinDate() != null) {
+            if (user.getLastCheckinDate().plusDays(1).equals(today)) {
+                // Điểm danh liên tiếp
+                newStreak = (user.getCheckinStreak() % 7) + 1;
+            } else {
+                // Bị đứt chuỗi
+                newStreak = 1;
+            }
+        }
+
+        // Phần thưởng theo ngày: [10, 10, 10, 10, 20, 20, 30]
+        int[] rewards = {10, 10, 10, 10, 20, 20, 30};
+        int checkinAmount = rewards[newStreak - 1];
+
         user.setBalance(user.getBalance() + checkinAmount);
-        user.setLastCheckinDate(LocalDate.now());
+        user.setLastCheckinDate(today);
+        user.setCheckinStreak(newStreak);
         userRepository.save(user);
 
-        logTransaction(userId, checkinAmount, Transaction.TransactionType.DAILY_CHECKIN, "Điểm danh hàng ngày +200 xu");
+        logTransaction(userId, checkinAmount, Transaction.TransactionType.DAILY_CHECKIN, 
+            "Điểm danh hàng ngày (Ngày " + newStreak + ") +" + checkinAmount + " xu");
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("amount", checkinAmount);
+        result.put("streak", newStreak);
+        return result;
     }
 
     /**
-     * Lấy danh sách bảng xếp hạng
+     * Lấy danh sách bảng xếp hạng theo tiêu chí
      */
-    public List<User> getLeaderboard() {
-        return userRepository.findAll().stream()
-                .sorted((u1, u2) -> Integer.compare(u2.getRankingPoints(), u1.getRankingPoints()))
+    public List<Map<String, Object>> getLeaderboard(String type) {
+        if ("spy".equalsIgnoreCase(type) || "civilian".equalsIgnoreCase(type)) {
+            return userStatsRepository.findAll().stream()
+                .sorted((s1, s2) -> "spy".equalsIgnoreCase(type) 
+                    ? Integer.compare(s2.getWinsSpy(), s1.getWinsSpy())
+                    : Integer.compare(s2.getWinsCivilian(), s1.getWinsCivilian()))
                 .limit(50)
+                .map(stats -> {
+                    Map<String, Object> m = new HashMap<>();
+                    userRepository.findById(stats.getUserId()).ifPresent(u -> {
+                        m.put("username", u.getUsername());
+                        m.put("display_name", u.getDisplayName());
+                        m.put("avatar_url", u.getAvatarUrl());
+                    });
+                    m.put("score", "spy".equalsIgnoreCase(type) ? stats.getWinsSpy() : stats.getWinsCivilian());
+                    return m;
+                })
+                .filter(m -> m.containsKey("username"))
+                .toList();
+        }
+
+        // Mặc định xếp theo Xu (balance)
+        return userRepository.findAll().stream()
+                .sorted((u1, u2) -> Integer.compare(u2.getBalance(), u1.getBalance()))
+                .limit(50)
+                .map(u -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("username", u.getUsername());
+                    m.put("display_name", u.getDisplayName());
+                    m.put("avatar_url", u.getAvatarUrl());
+                    m.put("score", u.getBalance());
+                    return m;
+                })
                 .toList();
     }
 
