@@ -33,6 +33,7 @@ public class User {
     private int balance = 500; // Mặc định tặng 500 xu cho người chơi mới
     private int rankingPoints = 0; // Điểm xếp hạng trọn đời (chỉ tăng không giảm)
     private LocalDate lastCheckinDate; // Ngày điểm danh gần nhất
+    private int checkinStreak = 0; // Số ngày điểm danh liên tiếp (1-7)
     // ----------------------
 
     private LocalDateTime createdAt = LocalDateTime.now();
