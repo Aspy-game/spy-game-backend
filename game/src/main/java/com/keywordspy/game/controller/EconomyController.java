@@ -93,19 +93,10 @@ public class EconomyController {
         }
     }
 
-    // GET /api/economy/leaderboard - Bảng xếp hạng
+    // GET /api/economy/leaderboard - Bảng xếp hạng đa tab
     @GetMapping("/leaderboard")
-    public ResponseEntity<?> getLeaderboard() {
-        List<User> topUsers = economyService.getLeaderboard();
-        List<Map<String, Object>> response = topUsers.stream().map(u -> {
-            Map<String, Object> m = new HashMap<>();
-            m.put("username", u.getUsername());
-            m.put("display_name", u.getDisplayName());
-            m.put("ranking_points", u.getRankingPoints());
-            m.put("rank_tier", calculateRankTier(u.getRankingPoints()));
-            return m;
-        }).collect(Collectors.toList());
-        return ResponseEntity.ok(response);
+    public ResponseEntity<?> getLeaderboard(@RequestParam(defaultValue = "balance") String type) {
+        return ResponseEntity.ok(economyService.getLeaderboard(type));
     }
 
     // GET /api/economy/transactions - Lịch sử giao dịch

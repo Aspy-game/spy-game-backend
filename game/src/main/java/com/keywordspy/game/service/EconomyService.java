@@ -6,6 +6,7 @@ import com.keywordspy.game.model.Transaction;
 import com.keywordspy.game.model.User;
 import com.keywordspy.game.repository.TransactionRepository;
 import com.keywordspy.game.repository.UserRepository;
+import com.keywordspy.game.repository.UserStatsRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ public class EconomyService {
 
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
+    private final UserStatsRepository userStatsRepository;
 
     // --- ECONOMY SYSTEM LOGIC ---
 
@@ -134,12 +136,41 @@ public class EconomyService {
     }
 
     /**
-     * Lấy danh sách bảng xếp hạng
+     * Lấy danh sách bảng xếp hạng theo tiêu chí
      */
-    public List<User> getLeaderboard() {
-        return userRepository.findAll().stream()
-                .sorted((u1, u2) -> Integer.compare(u2.getRankingPoints(), u1.getRankingPoints()))
+    public List<Map<String, Object>> getLeaderboard(String type) {
+        if ("spy".equalsIgnoreCase(type) || "civilian".equalsIgnoreCase(type)) {
+            return userStatsRepository.findAll().stream()
+                .sorted((s1, s2) -> "spy".equalsIgnoreCase(type) 
+                    ? Integer.compare(s2.getWinsSpy(), s1.getWinsSpy())
+                    : Integer.compare(s2.getWinsCivilian(), s1.getWinsCivilian()))
                 .limit(50)
+                .map(stats -> {
+                    Map<String, Object> m = new HashMap<>();
+                    userRepository.findById(stats.getUserId()).ifPresent(u -> {
+                        m.put("username", u.getUsername());
+                        m.put("display_name", u.getDisplayName());
+                        m.put("avatar_url", u.getAvatarUrl());
+                    });
+                    m.put("score", "spy".equalsIgnoreCase(type) ? stats.getWinsSpy() : stats.getWinsCivilian());
+                    return m;
+                })
+                .filter(m -> m.containsKey("username"))
+                .toList();
+        }
+
+        // Mặc định xếp theo Xu (balance)
+        return userRepository.findAll().stream()
+                .sorted((u1, u2) -> Integer.compare(u2.getBalance(), u1.getBalance()))
+                .limit(50)
+                .map(u -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("username", u.getUsername());
+                    m.put("display_name", u.getDisplayName());
+                    m.put("avatar_url", u.getAvatarUrl());
+                    m.put("score", u.getBalance());
+                    return m;
+                })
                 .toList();
     }
 
