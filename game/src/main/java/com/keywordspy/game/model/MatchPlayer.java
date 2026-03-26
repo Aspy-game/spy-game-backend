@@ -23,4 +23,6 @@ public class MatchPlayer {
     private Integer eliminatedRound;
 
     private boolean didWin = false;
+
+    private Boolean afk = false;
 }
