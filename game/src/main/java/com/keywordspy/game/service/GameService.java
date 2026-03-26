@@ -458,6 +458,9 @@ public class GameService {
             result.put("ability", "none");
         }
 
+        // Chuyển sang vòng tiếp theo ngay lập tức sau khi chọn kỹ năng
+        skipPhase(matchId);
+
         return result;
     }
 
