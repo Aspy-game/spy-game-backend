@@ -29,7 +29,7 @@ public class TimerService {
     public static final int VOTE_TIE_DURATION          = 10;
     public static final int ROUND_RESULT_DURATION      = 5;
     public static final int ROLE_CHECK_DURATION        = 300;
-    public static final int ROLE_CHECK_RESULT_DURATION = 300;
+    public static final int ROLE_CHECK_RESULT_DURATION = 10;
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
     private final Map<String, ScheduledFuture<?>> activeTimers = new ConcurrentHashMap<>();

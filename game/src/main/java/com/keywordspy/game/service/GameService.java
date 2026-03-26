@@ -458,6 +458,9 @@ public class GameService {
             result.put("ability", "none");
         }
 
+        // Chuyển sang vòng tiếp theo ngay lập tức sau khi chọn kỹ năng
+        skipPhase(matchId);
+
         return result;
     }
 
@@ -879,6 +882,7 @@ public class GameService {
         Player player = session.getPlayer(userId);
 
         Map<String, Object> state = new HashMap<>();
+        state.put("room_id", session.getRoomId());
         state.put("room_code", getRoomCode(session));
         state.put("match_id", matchId);
         state.put("round", session.getCurrentRound());
@@ -1137,6 +1141,13 @@ public class GameService {
         }
         messagingTemplate.convertAndSend(
                 "/topic/match/" + session.getMatchId() + "/game-over", (Object) gameOver);
+        
+        // RESET ROOM STATUS & CLEANUP SESSION
+        roomRepository.findById(session.getRoomId()).ifPresent(room -> {
+            room.setStatus(RoomStatus.waiting);
+            roomRepository.save(room);
+        });
+        gameSessions.remove(session.getMatchId());
     }
 
     // =========================================================
@@ -1241,11 +1252,20 @@ public class GameService {
             session.getPlayers().stream()
                 .filter(p -> !p.getUserId().equals(spyId) && (session.getInfectedUserId() == null || !p.getUserId().equals(session.getInfectedUserId())))
                 .forEach(p -> {
-                    p.setScoreGained(-5);
-                    if (!p.isAi()) {
-                        economyService.addReward(p.getUserId(), -5, Transaction.TransactionType.WIN_REWARD, "Thua ván: " + matchId, false);
-                        updateUserStats(p.getUserId(), false, p.getRole());
+                    if (p.isAi()) return;
+                    
+                    // KIỂM TRA AFK: Nếu đã AFK thì không cập nhật stats/reward nữa
+                    boolean alreadyAfk = matchPlayerRepository.findByMatchId(matchId).stream()
+                            .anyMatch(mp -> mp.getUserId().equals(p.getUserId()) && mp.getAfk() != null && mp.getAfk());
+                    
+                    if (alreadyAfk) {
+                        System.out.println("[REWARD-DEBUG] Skipping AFK player: " + p.getUserId());
+                        return;
                     }
+
+                    p.setScoreGained(-5);
+                    economyService.addReward(p.getUserId(), -5, Transaction.TransactionType.WIN_REWARD, "Thua ván: " + matchId, false);
+                    updateUserStats(p.getUserId(), false, p.getRole());
                 });
 
         } else if (winner == WinnerRole.civilians) {
@@ -1273,9 +1293,12 @@ public class GameService {
 
             if (session.getInfectedUserId() != null) {
                 Player infected = session.getPlayer(session.getInfectedUserId());
-                if (infected != null) {
-                    infected.setScoreGained(-5);
-                    if (!infected.isAi()) {
+                if (infected != null && !infected.isAi()) {
+                    boolean alreadyAfk = matchPlayerRepository.findByMatchId(matchId).stream()
+                            .anyMatch(mp -> mp.getUserId().equals(session.getInfectedUserId()) && mp.getAfk() != null && mp.getAfk());
+                    
+                    if (!alreadyAfk) {
+                        infected.setScoreGained(-5);
                         economyService.addReward(session.getInfectedUserId(), -5, Transaction.TransactionType.WIN_REWARD, "Thua ván: " + matchId, false);
                         updateUserStats(session.getInfectedUserId(), false, PlayerRole.civilian);
                     }
@@ -1285,7 +1308,8 @@ public class GameService {
     }
 
     private void updateUserStats(String userId, boolean isWin, PlayerRole role) {
-        userStatsRepository.findByUserId(userId).ifPresent(stats -> {
+        System.out.println("[STATS-DEBUG] Updating stats for user: " + userId + ", Win: " + isWin + ", Role: " + role);
+        userStatsRepository.findByUserId(userId).ifPresentOrElse(stats -> {
             stats.setTotalGames(stats.getTotalGames() + 1);
             if (isWin) {
                 if (role == PlayerRole.spy) stats.setWinsSpy(stats.getWinsSpy() + 1);
@@ -1293,10 +1317,11 @@ public class GameService {
             }
             if (role == PlayerRole.spy) stats.setTimesAsSpy(stats.getTimesAsSpy() + 1);
             
-            // TODO: Cập nhật correctVotes dựa trên VoteLog (Sprint sau)
-            
             stats.setUpdatedAt(LocalDateTime.now());
             userStatsRepository.save(stats);
+            System.out.println("[STATS-DEBUG] Correctly updated stats for user: " + userId + ". Total: " + stats.getTotalGames());
+        }, () -> {
+            System.out.println("[STATS-DEBUG] Stats record NOT FOUND for user: " + userId);
         });
     }
 
@@ -1404,5 +1429,52 @@ public class GameService {
         
         // Gửi lại role (bí mật)
         broadcastRoles(session);
+    }
+    // Xử lý khi người chơi thoát giữa trận (AFK)
+    public void handlePlayerQuit(String roomId, String userId) {
+        System.out.println("[AFK-DEBUG] Received quit request: roomId=" + roomId + ", userId=" + userId);
+        GameSession session = gameSessions.values().stream()
+                .filter(s -> s.getRoomId().equals(roomId) && s.getState() != GameState.GAME_OVER)
+                .findFirst()
+                .orElse(null);
+        
+        if (session == null) {
+            System.out.println("[AFK-DEBUG] No active session found for room: " + roomId);
+            return;
+        }
+
+        String matchId = session.getMatchId();
+        System.out.println("[AFK-DEBUG] Found session: matchId=" + matchId + ", state=" + session.getState());
+        final PlayerRole[] roleRef = {PlayerRole.civilian};
+
+        matchPlayerRepository.findByMatchId(matchId).stream()
+                .filter(mp -> mp.getUserId().equals(userId))
+                .findFirst()
+                .ifPresentOrElse(mp -> {
+                    if (mp.getAfk() != null && mp.getAfk()) {
+                        System.out.println("[AFK-DEBUG] Player already marked as AFK. Skipping stat update.");
+                        return;
+                    }
+                    System.out.println("[AFK-DEBUG] Updating MatchPlayer to AFK: " + mp.getId());
+                    mp.setAfk(true);
+                    matchPlayerRepository.save(mp);
+                    if (mp.getRole() != null) roleRef[0] = mp.getRole();
+                    
+                    // Chỉ cập nhật stats 1 lần khi quit
+                    updateUserStats(userId, false, roleRef[0]);
+                }, () -> {
+                    System.out.println("[AFK-DEBUG] MatchPlayer not found in match=" + matchId + " for user=" + userId);
+                });
+        
+        Player p = session.getPlayer(userId);
+        if (p != null) {
+            p.setAlive(false);
+            // Broadcast event để FE biết (optional, giúp UI mượt hơn)
+            Map<String, Object> afkMsg = new HashMap<>();
+            afkMsg.put("type", "PLAYER_AFK");
+            afkMsg.put("user_id", userId);
+            afkMsg.put("display_name", p.getDisplayName());
+            messagingTemplate.convertAndSend("/topic/match/" + matchId, (Object) afkMsg);
+        }
     }
 }

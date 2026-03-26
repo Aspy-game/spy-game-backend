@@ -105,12 +105,15 @@ public class RoomController {
     // POST /api/rooms/:roomId/leave — Rời phòng
     @PostMapping("/{roomId}/leave")
     public ResponseEntity<?> leaveRoom(@PathVariable String roomId) {
+        System.out.println("[CONTROLLER-DEBUG] POST /api/rooms/" + roomId + "/leave called");
         try {
             User user = getCurrentUser();
+            System.out.println("[CONTROLLER-DEBUG] User " + user.getId() + " is leaving room " + roomId);
             roomService.leaveRoom(roomId, user.getId());
 
             return ResponseEntity.ok(Map.of("message", "Left room"));
         } catch (Exception e) {
+            System.out.println("[CONTROLLER-DEBUG] Error in leaveRoom: " + e.getMessage());
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }

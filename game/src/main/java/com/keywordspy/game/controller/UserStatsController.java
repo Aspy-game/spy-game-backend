@@ -44,15 +44,18 @@ public class UserStatsController {
             UserStats stats = userStatsRepository.findByUserId(user.getId())
                     .orElse(new UserStats());
 
+            // Dùng số lượng thực tế từ MatchPlayer thay vì biến đếm totalGames
+            long totalGamesPlayed = matchPlayerRepository.countByUserId(user.getId());
+
             int totalWins = stats.getWinsCivilian() + stats.getWinsSpy() + stats.getWinsInfected();
-            double winRate = stats.getTotalGames() > 0
-                    ? Math.round((double) totalWins / stats.getTotalGames() * 1000.0) / 10.0
+            double winRate = totalGamesPlayed > 0
+                    ? Math.round((double) totalWins / totalGamesPlayed * 1000.0) / 10.0
                     : 0.0;
 
             Map<String, Object> result = new HashMap<>();
             result.put("user_id", user.getId());
             result.put("username", user.getUsername());
-            result.put("total_games", stats.getTotalGames());
+            result.put("total_games", totalGamesPlayed);
             result.put("total_wins", totalWins);
             result.put("win_rate", winRate);
             result.put("wins_civilian", stats.getWinsCivilian());
@@ -68,23 +71,57 @@ public class UserStatsController {
         }
     }
 
+    @Autowired
+    private com.keywordspy.game.repository.MatchPlayerRepository matchPlayerRepository;
+
     // GET /users/me/history
     @GetMapping("/history")
     public ResponseEntity<?> getMyHistory(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @RequestParam(defaultValue = "20") int size) {
         try {
             User user = getCurrentUser();
 
-            List<Match> matches = matchRepository.findAll(PageRequest.of(page, size))
-                    .stream()
-                    .filter(m -> m.getSpyUserId() != null &&
-                            m.getSpyUserId().equals(user.getId()))
-                    .toList();
+            // Lấy 20 trận đấu gần nhất của người chơi
+            List<com.keywordspy.game.model.MatchPlayer> matchPlayers = matchPlayerRepository.findTop20ByUserIdOrderByIdDesc(user.getId());
+
+            List<Map<String, Object>> historyList = new java.util.ArrayList<>();
+            for (com.keywordspy.game.model.MatchPlayer mp : matchPlayers) {
+                Map<String, Object> historyItem = new HashMap<>();
+                System.out.println("[HISTORY-DEBUG] Match " + mp.getMatchId() + " isAfk=" + mp.getAfk());
+                
+                matchRepository.findById(mp.getMatchId() != null ? mp.getMatchId() : "").ifPresent(match -> {
+                    
+                    // Xác định role hiển thị
+                    String displayRole = "civilian";
+                    if (mp.getRole() != null && mp.getRole().toString().equalsIgnoreCase("spy")) {
+                        displayRole = "spy";
+                    } else if (mp.isInfected()) {
+                        displayRole = "infected";
+                    }
+                    
+                    historyItem.put("role", displayRole);
+                    
+                    // Xử lý AFK
+                    if (mp.getAfk() != null && mp.getAfk()) {
+                        historyItem.put("did_win", false);
+                        historyItem.put("status", "AFK");
+                    } else {
+                        historyItem.put("did_win", mp.isDidWin());
+                        historyItem.put("status", mp.isDidWin() ? "WIN" : "LOSE");
+                    }
+
+                    historyItem.put("started_at", match.getStartedAt());
+                    historyItem.put("match_id", match.getId());
+                    historyItem.put("winner", match.getWinnerRole() != null ? match.getWinnerRole().toString() : "unknown");
+
+                    historyList.add(historyItem);
+                });
+            }
 
             Map<String, Object> result = new HashMap<>();
-            result.put("matches", matches);
-            result.put("total", matches.size());
+            result.put("matches", historyList);
+            result.put("total", historyList.size());
             result.put("page", page);
             result.put("size", size);
 

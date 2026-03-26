@@ -28,6 +28,11 @@ public class RoomService {
 
     @Autowired
     private SettingsService settingsService;
+
+    @Autowired
+    @org.springframework.context.annotation.Lazy
+    private GameService gameService;
+
     // Tạo phòng mới
     public Room createRoom(String hostUserId, boolean isPrivate, String customRoomCode) {
         User host = userRepository.findById(hostUserId)
@@ -93,6 +98,13 @@ public class RoomService {
     public void leaveRoom(String roomId, String userId) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new RuntimeException("Room not found"));
+
+        System.out.println("[ROOM-DEBUG] User " + userId + " leaving room " + roomId + ". Room status: " + room.getStatus());
+        // Nếu đang trong trận -> Xử lý AFK
+        if (room.getStatus() == RoomStatus.in_game) {
+            System.out.println("[ROOM-DEBUG] Room is in_game, triggering handlePlayerQuit");
+            gameService.handlePlayerQuit(roomId, userId);
+        }
 
         roomPlayerRepository.deleteByRoomIdAndUserId(roomId, userId);
 
