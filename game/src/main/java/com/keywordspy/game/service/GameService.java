@@ -263,10 +263,8 @@ public class GameService {
         messagingTemplate.convertAndSend("/topic/match/" + matchId + "/chat", (Object) chatMsg);
 
         // KÍCH HOẠT AI THẢO LUẬN (Nếu chưa bị thao túng và AI chưa chat vòng này)
-        // Trong phase Thảo luận, AI có thể chat nhiều lần, nhưng lần đầu tiên cần context
-        if (session.getAbilityType() != SpyAbility.fake_message && isAiAlive(session)) {
+        if (session.getAbilityType() != SpyAbility.fake_message && isAiAlive(session) && !session.isAiDiscussUsedThisRound()) {
             // Giả sử AI chỉ tự động thảo luận 1 lần ngay sau tin nhắn đầu tiên của human
-            // Hoặc có thể thêm logic xác suất/thời gian ở đây
             autoDiscussForAi(session, content);
         }
     }
@@ -283,10 +281,7 @@ public class GameService {
         Map<String, String> currentVotes = session.getVotes()
                 .computeIfAbsent(session.getCurrentRound(), k -> new HashMap<>());
 
-        if (currentVotes.containsKey(voterId)) {
-            return; // Đã vote rồi thì bỏ qua
-        }
-
+        // Cập nhật hoặc thêm vote mới (cho phép chọn lại)
         currentVotes.put(voterId, targetId);
         broadcastVoteCounts(session);
 
@@ -629,18 +624,20 @@ public class GameService {
             return;
         }
 
-        // Civilians (không kể Spy) còn 1 → Spy thắng
-        // Logic mới: tính cả người bị tha hóa (infected) thuộc phe Spy
-        // KHÔNG tính AI vào số lượng dân thường thật sự (vì Gián điệp thao túng được AI)
-        long aliveCivilians = session.getAlivePlayers().stream()
+        // Spy thắng khi số lượng Dân Thường (con người) còn lại <= 1
+        // Lưu ý: AI không được tính là Dân Thường có khả năng ngăn cản Spy win
+        // Dân Thường bị Tha Hóa (Infected) cũng không được tính vì họ thuộc phe Spy
+        long aliveHumanCivilians = session.getAlivePlayers().stream()
                 .filter(p -> p.getRole() == PlayerRole.civilian && !p.isInfected() && !p.isAi())
                 .count();
         
-        if (aliveCivilians <= 1) {
+        // Nếu chỉ còn 1 Dân Thường (con người) duy nhất, Spy thắng ngay lập tức 
+        // (bất kể AI còn sống hay không)
+        if (aliveHumanCivilians <= 1) {
             session.setWinnerRole(WinnerRole.spy);
             stateMachine.transition(session, GameState.GAME_OVER);
             broadcastGameOver(session);
-            broadcastPhase(session); // Gửi tên thật + xu thưởng cho Frontend
+            broadcastPhase(session); 
             return;
         }
 
@@ -656,8 +653,9 @@ public class GameService {
         session.setCurrentRound(nextRound);
         session.setEliminatedUserId(null); // reset kết quả round trước
 
-        // Reset fake message cho vòng mới (Spy được dùng lại)
+        // Reset flags cho vòng mới
         session.setFakeMessageUsedThisRound(false);
+        session.setAiDiscussUsedThisRound(false);
 
         if (nextRound == 2 && !session.isRoleCheckDone()) {
             // Sau Vòng 1 → vào Vòng Đoán Vai Trò (1 lần duy nhất)
@@ -853,10 +851,13 @@ public class GameService {
     }
 
     private void autoDiscussForAi(GameSession session, String context) {
-        if (session.getState() != GameState.DISCUSSING) return;
+        if (session.getState() != GameState.DISCUSSING || session.isAiDiscussUsedThisRound()) return;
         Player ai = getAiPlayer(session);
 
         try {
+            // Đánh dấu AI đã chat vòng này ngay lập tức
+            session.setAiDiscussUsedThisRound(true);
+
             // Giả lập AI suy nghĩ một chút
             String content = aiService.getAiDescription(session.getCivilianKeyword(), session.getCurrentRound());
             

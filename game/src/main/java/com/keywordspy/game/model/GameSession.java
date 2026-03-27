@@ -90,6 +90,9 @@ public class GameSession {
     // Spy đã Tha hóa ai chưa — chỉ được 1 lần cả ván
     private boolean infectUsed = false;
 
+    // AI đã thảo luận vòng này chưa — reset về false đầu mỗi vòng mới
+    private boolean aiDiscussUsedThisRound = false;
+
     // =========================================================
     // REWARD SETTINGS (Admin can adjust)
     // =========================================================
