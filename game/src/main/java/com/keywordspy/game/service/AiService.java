@@ -17,10 +17,10 @@ public class AiService {
      */
     public String getAiDescription(String keyword, int round) {
         String prompt = String.format(
-            "Bạn là một người chơi trong trò chơi 'Keyword Spy'. Từ khóa của bạn là '%s'. " +
-            "Đây là vòng chơi thứ %d. Hãy đưa ra một câu mô tả ngắn gọn (từ 1 đến 5 từ) về từ khóa này " +
+            "Bạn là một người chơi trong trò chơi 'Keyword Spy' (Gián điệp từ khóa). Từ khóa của bạn là '%s'. " +
+            "Đây là vòng chơi thứ %d. Hãy đưa ra một câu mô tả ngắn gọn (từ 1 đến 5 từ) bằng tiếng Việt về từ khóa này " +
             "sao cho những người cùng phe có thể hiểu nhưng gián điệp khó nhận ra. " +
-            "Chỉ trả về nội dung mô tả, không thêm bất kỳ từ nào khác.",
+            "Yêu cầu: Chỉ trả về nội dung mô tả bằng tiếng Việt, không thêm bất kỳ từ nào khác, không dùng tiếng Anh.",
             keyword, round
         );
 
@@ -33,7 +33,7 @@ public class AiService {
 
     private String callGeminiSdk(String prompt, String fallback) {
         if (apiKey == null || apiKey.isEmpty()) {
-            return "AI: Vui lòng cấu hình Gemini API Key. (Prompt: " + prompt + ")";
+            return "AI: Vui lòng cấu hình Gemini API Key.";
         }
 
         try {
@@ -67,12 +67,12 @@ public class AiService {
 
     private String generateSimulatedDescription(String key, int round) {
         String[] templates = new String[]{
-                "Liên tưởng đến " + key + " nhưng không trực tiếp",
-                "Gợi nhớ một thứ gần với " + key,
-                "Hơi hướng " + key + ", khá trừu tượng",
-                "Nghĩ về chủ đề như " + key + " nhưng khác chữ",
-                "Cảm giác tương tự " + key + " ở bối cảnh khác"
+                "Cũng khá là quen thuộc với mọi người",
+                "Thường xuất hiện trong đời sống hằng ngày",
+                "Cái này có vẻ liên quan đến sở thích nhiều hơn",
+                "Mọi người chắc ai cũng đã từng thấy qua rồi",
+                "Một thứ khá là phổ biến và dễ nhận diện"
         };
-        return templates[new Random().nextInt(templates.length)] + " (Dự phòng)";
+        return templates[new Random().nextInt(templates.length)];
     }
 }
