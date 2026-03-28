@@ -17,8 +17,9 @@ public class AiService {
      */
     public String getAiDescription(String keyword, int round) {
         String prompt = String.format(
-            "Bạn là một người chơi trong trò chơi 'Keyword Spy' (Gián điệp từ khóa). Từ khóa của bạn là '%s'. " +
-            "Đây là vòng chơi thứ %d. Hãy đưa ra một câu mô tả ngắn gọn (từ 1 đến 5 từ) bằng tiếng Việt về từ khóa này " +
+            "Bạn là một người chơi trong trò chơi 'Keyword Spy' (Gián điệp từ khóa). " +
+            "Thông tin từ khóa hoặc mô tả về từ khóa của bạn là: '%s'. " +
+            "Đây là vòng chơi thứ %d. Hãy đưa ra một câu mô tả ngắn gọn (từ 1 đến 5 từ) bằng tiếng Việt dựa trên thông tin trên " +
             "sao cho những người cùng phe có thể hiểu nhưng gián điệp khó nhận ra. " +
             "Yêu cầu: Chỉ trả về nội dung mô tả bằng tiếng Việt, không thêm bất kỳ từ nào khác, không dùng tiếng Anh.",
             keyword, round

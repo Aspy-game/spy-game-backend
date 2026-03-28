@@ -28,9 +28,11 @@ public class Transaction {
         BET,            // Trừ tiền cược
         WIN_REWARD,     // Thưởng thắng ván
         DAILY_CHECKIN,  // Điểm danh hàng ngày
-        GUESS_BONUS,    // Thưởng đoán vai
-        SKILL_BONUS,    // Thưởng kỹ năng (lừa AI/người chơi)
-        RELIEF,         // Cứu trợ khi hết tiền
+        GUESS_BONUS,    // Thưởng đoán đúng vai
+        RELIEF,         // Quà cứu trợ khi hết xu
+        SKILL_BONUS,    // Thưởng kỹ năng (ví dụ Spy dùng AI thành công)
+        BUY_SKILL,      // Mua kỹ năng trong Shop
+        CREATE_SPECIAL_ROOM, // Phí tạo phòng đặc biệt
         ADMIN_ADD       // Admin tặng xu (Test)
     }
 }

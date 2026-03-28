@@ -13,6 +13,10 @@ public class KeywordPair {
     private String civilianKeyword;
 
     private String spyKeyword;
+    
+    // Mô tả dùng cho Vòng Đặc Biệt
+    private String civilianDescription;
+    private String spyDescription;
 
     private String category;
 }

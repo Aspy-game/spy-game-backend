@@ -22,6 +22,8 @@ import java.util.List;
 @Slf4j
 public class EconomyService {
 
+    public static final int SPECIAL_ROOM_COST = 500;
+
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
     private final UserStatsRepository userStatsRepository;
@@ -174,13 +176,29 @@ public class EconomyService {
                 .toList();
     }
 
+    @Transactional
+    public void deductBalance(String userId, int amount, Transaction.TransactionType type, String description) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found: " + userId));
+
+        if (user.getBalance() < amount) {
+            throw new RuntimeException("Số dư không đủ");
+        }
+
+        user.setBalance(user.getBalance() - amount);
+        userRepository.save(user);
+
+        logTransaction(userId, -amount, type, description);
+    }
+
     private void logTransaction(String userId, int amount, Transaction.TransactionType type, String description) {
-        Transaction transaction = new Transaction();
-        transaction.setUserId(userId);
-        transaction.setAmount(amount);
-        transaction.setType(type);
-        transaction.setDescription(description);
-        transaction.setCreatedAt(LocalDateTime.now());
+        Transaction transaction = Transaction.builder()
+                .userId(userId)
+                .amount(amount)
+                .type(type)
+                .description(description)
+                .createdAt(LocalDateTime.now())
+                .build();
         transactionRepository.save(transaction);
     }
 }

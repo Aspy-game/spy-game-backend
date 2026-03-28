@@ -55,6 +55,32 @@ public class RoomController {
         }
     }
 
+    // POST /api/rooms/create-special — Tạo phòng đặc biệt
+    @PostMapping("/create-special")
+    public ResponseEntity<?> createSpecialRoom(@RequestBody(required = false) Map<String, Object> body) {
+        try {
+            User user = getCurrentUser();
+            boolean isPrivate = body != null && Boolean.TRUE.equals(body.get("is_private"));
+            String customRoomCode = body != null ? (String) body.get("room_code") : null;
+
+            Room room = roomService.createSpecialRoom(user.getId(), isPrivate, customRoomCode);
+
+            return ResponseEntity.status(201).body(Map.of(
+                    "room_id", room.getId(),
+                    "room_code", room.getRoomCode(),
+                    "host", Map.of(
+                            "user_id", user.getId(),
+                            "display_name", user.getDisplayName() != null ? user.getDisplayName() : user.getUsername()
+                    ),
+                    "status", room.getStatus().toString(),
+                    "current_players", room.getCurrentPlayers(),
+                    "is_special_round", room.isSpecialRound()
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     // GET /api/rooms — Danh sách phòng công khai
     @GetMapping
     public ResponseEntity<?> getRooms() {

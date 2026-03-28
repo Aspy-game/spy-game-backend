@@ -67,6 +67,7 @@ public class GameService {
         match.setRoomId(roomId);
         match.setCivilianKeyword(keyword.getCivilianKeyword());
         match.setSpyKeyword(keyword.getSpyKeyword());
+        match.setSpecialRound(room.isSpecialRound());
         match.setStatus(MatchStatus.in_progress);
         match.setStartedAt(LocalDateTime.now());
         Match savedMatch = matchRepository.save(match);
@@ -75,8 +76,14 @@ public class GameService {
         session.setMatchId(savedMatch.getId());
         session.setRoomId(roomId);
         session.setRoomCode(room.getRoomCode());
+        session.setSpecialRound(room.isSpecialRound());
+        
+        // Luôn lưu từ khóa gốc và mô tả
         session.setCivilianKeyword(keyword.getCivilianKeyword());
         session.setSpyKeyword(keyword.getSpyKeyword());
+        session.setCivilianDescription(keyword.getCivilianDescription());
+        session.setSpyDescription(keyword.getSpyDescription());
+        
         session.setKeywordPairId(keyword.getId());
         session.setCurrentRound(1);
 
@@ -122,8 +129,9 @@ public class GameService {
         savedMatch.setSpyUserId(finalSpyUserId);
         matchRepository.save(savedMatch);
 
-        // Reset admin selection sau khi dùng
+        // Reset admin selection và special round sau khi dùng
         room.setAdminSelectedSpyId(null);
+        room.setSpecialRound(false);
         roomRepository.save(room);
 
         gameSessions.put(savedMatch.getId(), session);
@@ -203,6 +211,36 @@ public class GameService {
         players.add(aiPlayer);
 
         return players;
+    }
+
+    public void enableSpecialRound(String roomId, String userId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+        
+        if (!room.getHostId().equals(userId)) {
+            throw new RuntimeException("Only host can enable special round");
+        }
+        
+        room.setSpecialRound(true);
+        roomRepository.save(room);
+        
+        // Notify players in room via websocket
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("type", "SPECIAL_ROUND_ENABLED");
+        msg.put("room_id", roomId);
+        messagingTemplate.convertAndSend("/topic/room/" + roomId, (Object) msg);
+    }
+
+    public void enableAnonymousVoting(String matchId, String userId) {
+        GameSession session = getSession(matchId);
+        session.setAnonymousVoting(true);
+        
+        // Notify players in match via websocket
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("type", "ANONYMOUS_VOTING_ENABLED");
+        msg.put("match_id", matchId);
+        msg.put("user_id", userId); // Ai là người dùng skill
+        messagingTemplate.convertAndSend("/topic/match/" + matchId, (Object) msg);
     }
 
     // =========================================================
@@ -771,8 +809,11 @@ public class GameService {
 
     public void onVotePhaseEnd(String matchId) {
         GameSession session = getSession(matchId);
-        if (session.getState() == GameState.VOTING)
+        if (session.getState() == GameState.VOTING) {
             processVoteResult(session);
+            // Reset kỹ năng ẩn danh sau khi dùng xong vòng vote
+            session.setAnonymousVoting(false);
+        }
     }
 
     public void onRoleCheckPhaseEnd(String matchId) {
@@ -888,6 +929,8 @@ public class GameService {
         state.put("match_id", matchId);
         state.put("round", session.getCurrentRound());
         state.put("phase", session.getState() != null ? session.getState().toString() : "WAITING");
+        state.put("is_special_round", session.isSpecialRound());
+        state.put("is_anonymous_voting", session.isAnonymousVoting());
         
         if (session.getPhaseEndTime() != null) {
             state.put("phase_end_at", session.getPhaseEndTime().toString());
@@ -900,12 +943,19 @@ public class GameService {
             
             // Nếu game đã bắt đầu (sau giai đoạn WAITING), ẩn danh tính
             if (session.getState() != null && session.getState() != GameState.GAME_OVER) {
-                pm.put("display_name", getAnonymousName(p));
+                // Kỹ năng Ẩn danh trong lúc bỏ phiếu
+                if (session.isAnonymousVoting() && session.getState() == GameState.VOTING) {
+                    pm.put("display_name", "Người chơi bí ẩn");
+                    pm.put("color", "gray");
+                } else {
+                    pm.put("display_name", getAnonymousName(p));
+                    pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
+                }
             } else {
                 pm.put("display_name", p.getDisplayName() != null ? p.getDisplayName() : p.getUsername());
+                pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
             }
             
-            pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
             pm.put("is_alive", p.isAlive());
             pm.put("role", p.getRole() != null ? p.getRole().toString() : "civilian");
             return pm;
@@ -927,6 +977,13 @@ public class GameService {
             state.put("your_keyword", (player.getRole() == PlayerRole.spy || player.isInfected())
                     ? session.getSpyKeyword()
                     : session.getCivilianKeyword());
+
+            // Gửi thêm mô tả nếu là vòng đặc biệt
+            if (session.isSpecialRound()) {
+                state.put("your_description", (player.getRole() == PlayerRole.spy || player.isInfected())
+                        ? session.getSpyDescription()
+                        : session.getCivilianDescription());
+            }
             
             // Trả về kỹ năng đã chọn nếu là Spy
             if (player.getRole() == PlayerRole.spy) {
@@ -1023,6 +1080,8 @@ public class GameService {
         phaseMsg.put("match_id", session.getMatchId());
         phaseMsg.put("phase", session.getState() != null ? session.getState().toString() : "WAITING");
         phaseMsg.put("round", session.getCurrentRound());
+        phaseMsg.put("is_special_round", session.isSpecialRound());
+        phaseMsg.put("is_anonymous_voting", session.isAnonymousVoting());
         if (session.getPhaseEndTime() != null) {
             phaseMsg.put("phase_end_at", session.getPhaseEndTime().toString());
             phaseMsg.put("remaining_seconds", timerService.getRemainingSeconds(session));
@@ -1038,12 +1097,19 @@ public class GameService {
             
             // Ẩn danh tính tương tự getGameState
             if (session.getState() != null && session.getState() != GameState.GAME_OVER) {
-                pm.put("display_name", getAnonymousName(p));
+                // Kỹ năng Ẩn danh trong lúc bỏ phiếu
+                if (session.isAnonymousVoting() && session.getState() == GameState.VOTING) {
+                    pm.put("display_name", "Người chơi bí ẩn");
+                    pm.put("color", "gray"); // Màu xám cho tất cả
+                } else {
+                    pm.put("display_name", getAnonymousName(p));
+                    pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
+                }
             } else {
                 pm.put("display_name", p.getDisplayName() != null ? p.getDisplayName() : p.getUsername());
+                pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
             }
             
-            pm.put("color", p.getColor() != null ? p.getColor().toString() : "red");
             pm.put("is_alive", p.isAlive());
             pm.put("score_gained", p.getScoreGained()); // Dữ liệu xu thưởng cho bảng game over
             return pm;
@@ -1127,6 +1193,11 @@ public class GameService {
         gameOver.put("spy_user_id", session.getSpyUserId());
         gameOver.put("civilian_keyword", session.getCivilianKeyword());
         gameOver.put("spy_keyword", session.getSpyKeyword());
+        
+        // Luôn gửi mô tả để FE hiển thị nếu là vòng đặc biệt
+        gameOver.put("civilian_description", session.getCivilianDescription());
+        gameOver.put("spy_description", session.getSpyDescription());
+        gameOver.put("is_special_round", session.isSpecialRound());
 
         // --- ECONOMY SYSTEM: Phát thưởng ---
         processEndGameRewards(session);

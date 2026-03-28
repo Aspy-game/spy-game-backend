@@ -34,6 +34,10 @@ public class User {
     private int rankingPoints = 0; // Điểm xếp hạng trọn đời (chỉ tăng không giảm)
     private LocalDate lastCheckinDate; // Ngày điểm danh gần nhất
     private int checkinStreak = 0; // Số ngày điểm danh liên tiếp (1-7)
+    
+    // --- SKILL SYSTEM (INVENTORY) ---
+    // skill_id -> quantity
+    private java.util.Map<String, Integer> inventory = new java.util.HashMap<>();
     // ----------------------
 
     // --- FORGOT PASSWORD ---

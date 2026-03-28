@@ -3,7 +3,9 @@ package com.keywordspy.game.service;
 import com.keywordspy.game.model.*;
 import com.keywordspy.game.repository.RoomPlayerRepository;
 import com.keywordspy.game.repository.RoomRepository;
-import com.keywordspy.game.repository.UserRepository;
+import com.keywordspy.game.repository.UserRepository;   
+import com.keywordspy.game.repository.TransactionRepository;   
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -25,6 +27,9 @@ public class RoomService {
 
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
+
+    @Autowired
+    private EconomyService economyService;
 
     @Autowired
     private SettingsService settingsService;
@@ -57,6 +62,20 @@ public class RoomService {
 
         // Thêm host vào room_players và cập nhật currentPlayers
         return joinRoom(savedRoom.getRoomCode(), hostUserId);
+    }
+
+    // Tạo phòng đặc biệt (tốn phí)
+    @Transactional
+    public Room createSpecialRoom(String hostUserId, boolean isPrivate, String customRoomCode) {
+        // Trừ phí tạo phòng
+        economyService.deductBalance(hostUserId, EconomyService.SPECIAL_ROOM_COST, Transaction.TransactionType.CREATE_SPECIAL_ROOM, "Phí tạo phòng đặc biệt");
+
+        // Tạo phòng như bình thường
+        Room room = createRoom(hostUserId, isPrivate, customRoomCode);
+
+        // Đánh dấu là phòng đặc biệt
+        room.setSpecialRound(true);
+        return roomRepository.save(room);
     }
 
     // Join phòng bằng roomCode
