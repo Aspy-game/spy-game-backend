@@ -28,6 +28,10 @@ public class Match {
     private int totalRounds;
 
     private Integer aiEliminatedRound;
+    
+    // SKILL SYSTEM
+    private boolean isSpecialRound = false;
+    private boolean isAnonymousVoting = false;
 
     private MatchStatus status = MatchStatus.in_progress;
 

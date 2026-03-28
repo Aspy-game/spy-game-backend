@@ -28,6 +28,15 @@ public class GameSession {
     // =========================================================
     private String civilianKeyword;
     private String spyKeyword;
+    
+    // SKILL SYSTEM: Vòng đặc biệt sử dụng mô tả
+    private String civilianDescription;
+    private String spyDescription;
+    private boolean isSpecialRound = false;
+    
+    // SKILL SYSTEM: Ẩn danh trong lúc bỏ phiếu
+    private boolean isAnonymousVoting = false;
+
     private String keywordPairId;
 
     // =========================================================
